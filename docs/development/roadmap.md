@@ -58,8 +58,12 @@ buffers, no probe-internal allocation.
   canonical GPU detection surface.
 - Single source per the *one source per fact* principle — no
   fallback chain to `lspci` / nvidia-smi / etc.
-- **Dep gate**: `ai-hwaccel` ≥ 2.2.2 with a cyrius-version pin
-  compatible with mihi's `cyrius.cyml` pin at the time of M3 start.
+- **Dep gate**: `ai-hwaccel` ships a `[lib].modules` surface (parallel
+  to mihi's own reshape) so mihi can `include` the detection
+  primitives via `cyrius deps` rather than shelling out — the no-exec
+  rule rules out consuming the binary. As of 2026-05-19, ai-hwaccel
+  2.2.3 is on the cyrius 6.0.0 pin but is still binary-shaped; the
+  reshape is the active blocker.
 - **Acceptance**: smoke prints GPU vendor + model on a NUC AMD
   system.
 
