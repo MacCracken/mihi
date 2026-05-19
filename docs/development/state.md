@@ -5,10 +5,11 @@
 
 ## Version
 
-**0.3.0** — released 2026-05-19. M2 complete: host-identity probes
-(hostname / uptime / distro) close the "tell me about this box"
-surface for the login MOTD path. M1 shipped earlier the same day
-covering kernel + CPU + memory.
+**0.4.0** — released 2026-05-19. M3 complete: accelerator-identity
+probes via ai-hwaccel 2.2.5's no-exec API. mihi now covers kernel /
+CPU / memory / host-identity / accelerators — the full v1.0 probe
+surface except `iam`'s consumer integration (M4). M2 shipped earlier
+the same day (host identity); M1 covered kernel + CPU + memory.
 
 ## Toolchain
 
@@ -23,20 +24,21 @@ bundle order; `cyrius distlib` concatenates them into
 
 ## Source
 
-M2 complete — 10 probes across kernel / cpu / mem / host. M3 (GPU
-via `ai-hwaccel`) is next.
+M3 complete — 15 probes across kernel / cpu / mem / host / gpu.
+M4 (`iam` consumer integration) is next.
 
 - `src/types.cyr` — shared types (empty; `MihiInfo` deferred per ADR 0001)
 - `src/cpu.cyr` — `mihi_cpu_arch` ✅ + `mihi_cpu_count` ✅ + `mihi_cpu_model` ✅ (+ `mihi_parse_cpu_range` / `mihi_parse_cpu_model` pure-function helpers)
 - `src/mem.cyr` — `mihi_mem_total` ✅ + `mihi_mem_free` ✅ (+ `mihi_find_meminfo_field` / `mihi_parse_meminfo_kb` / `mihi_extract_meminfo_bytes` helpers)
 - `src/kernel.cyr` — `mihi_uname` wrapper + `mihi_kernel_name` ✅ + `mihi_kernel_version` ✅
 - `src/host.cyr` — `mihi_hostname` ✅ + `mihi_uptime_secs` ✅ + `mihi_distro` ✅ (+ `mihi_parse_uptime_secs` / `mihi_find_osrelease_key` / `mihi_parse_osrelease_value` helpers)
+- `src/gpu.cyr` — `mihi_gpu_count` ✅ + `mihi_gpu_name` ✅ + `mihi_gpu_memory_bytes` ✅ + `mihi_gpu_family` ✅ + `mihi_gpu_type` ✅ (module-level singleton cache via `_mihi_gpu_ensure`; first call runs `registry_detect_no_exec()`)
 - `src/main.cyr` — convenience re-export (consumed by smoke + tests; not in distlib bundle)
-- `programs/smoke.cyr` — smoke binary; prints `kernel / release / arch / host / model / cpus / mem MiB / free MiB / uptime / distro`
+- `programs/smoke.cyr` — smoke binary; prints `kernel / release / arch / host / model / cpus / mem MiB / free MiB / uptime / distro / gpu cnt / gpu / gpu MiB`
 
 ## Tests
 
-- `tests/mihi.tcyr` — primary suite: 59 assertions across 24 test
+- `tests/mihi.tcyr` — primary suite: 75 assertions across 28 test
   groups. Slice A: real-uname happy path + zero-init buffer +
   synthetic-uts offset round-trip. Slice B: range-parser unit tests,
   cpuinfo-parser synthetic tests (happy + missing-field + line-anchor
@@ -47,29 +49,34 @@ via `ai-hwaccel`) is next.
   uptime parser (happy / freshly-booted / empty / non-digit),
   os-release key anchors (file-start + mid-buffer + mid-line + missing),
   value parser (quoted + bare + empty), ID-fallback composition, real
-  `/proc/uptime` + `/etc/os-release` reads.
+  `/proc/uptime` + `/etc/os-release` reads. Slice E (M3): synthetic
+  registry CPU-only count + accessors, synthetic CPU+ROCm registry
+  with name/memory/family/type assertions, out-of-range idx sentinel
+  returns, live `registry_detect_no_exec()` smoke.
 - `tests/mihi.bcyr` — benchmark stub
 - `tests/mihi.fcyr` — fuzz stub
-
-M3 will add `ai-hwaccel`-backed GPU probes.
 
 ## Build
 
 ```sh
 cyrius deps
 cyrius build programs/smoke.cyr build/mihi-smoke
-./build/mihi-smoke      # prints kernel / release / arch / host / model / cpus / mem MiB / free MiB / uptime / distro + "mihi smoke ok", exit 0
-cyrius test             # 59/59 pass
+./build/mihi-smoke      # prints all 11+ lines including gpu cnt / gpu / gpu MiB + "mihi smoke ok", exit 0
+cyrius test             # 75/75 pass
 ```
+
+One persistent linker warning: `undefined function 'registry_to_json'`
+— a dangling reference in the ai-hwaccel 2.2.5 bundle (cache.cyr's
+disk-write path; json_out.cyr is excluded). DCE elides the call.
+To be fixed in ai-hwaccel 2.2.6.
 
 ## Dependencies
 
 Direct (declared in `cyrius.cyml`):
 
-- stdlib — string, fmt, alloc, io, vec, str, slice, syscalls, assert
-- **agnosys** — Result-based wrapper over `uname(2)` / `sysinfo(2)`. mihi's uname-backed probes (kernel_name / kernel_version / cpu_arch / hostname) share one syscall through `agnosys_uname` rather than each re-implementing `SYS_UNAME`. See [ADR 0001](../adr/0001-shared-uts-buffer.md).
-
-M3 will add `ai-hwaccel` for GPU probes.
+- **stdlib** — string, fmt, alloc, io, vec, str, slice, syscalls, assert, agnosys, plus (added for the ai-hwaccel bundle) fs, tagged, process, fnptr, thread, freelist, hashmap, ct, json. DCE drops unused code from the linked binary.
+- **agnosys** — Result-based wrapper over `uname(2)` / `sysinfo(2)`. mihi's uname-backed probes share one syscall through `agnosys_uname`. See [ADR 0001](../adr/0001-shared-uts-buffer.md).
+- **ai-hwaccel 2.2.5** — accelerator detection. mihi pins the first release with the no-exec contract (`registry_detect_no_exec()` masks off the eight subprocess-shelling backends). Without it mihi couldn't honor the "probes are pure reads" rule.
 
 ## Consumers
 
@@ -82,8 +89,7 @@ _None yet._ Planned at v1.0:
 
 ## Next
 
-See [`roadmap.md`](roadmap.md) for the v1.0 plan. **M2 shipped as
-v0.3.0.** Next is M3 (v0.4.0): GPU probes via
-[`ai-hwaccel`](https://github.com/MacCracken/ai-hwaccel) — adds a new
-declared dep + a cyrius-version pin compatible with `cyrius.cyml`.
-After that M4 (v0.5.0) integrates `iam` as the first consumer.
+See [`roadmap.md`](roadmap.md) for the v1.0 plan. **M3 shipped as
+v0.4.0.** Next is M4 (v0.5.0): `iam` consumes mihi end-to-end. The
+library has to be **shape-stable** through M4 — signature changes
+are still breaking pre-v1.0 but should be ADR'd before landing.

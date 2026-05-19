@@ -81,6 +81,35 @@ fn main() {
     }
     print("distro:  ", 9); println(distro);
 
+    # Slice E — accelerator probes via ai-hwaccel 2.2.5 no-exec API.
+    # First call lazy-initializes the module-level registry cache; the
+    # subsequent name/memory calls are O(n) walks of the cached vec.
+    # No subprocess spawning anywhere on this path — only the eight
+    # sysfs-only backends run (ROCm, Intel NPU, AMD XDNA, TPU,
+    # Qualcomm, Groq, Samsung NPU, MediaTek APU).
+    var ngpu: i64 = mihi_gpu_count();
+    print("gpu cnt: ", 9); println_int(ngpu);
+
+    # One line per accelerator. The label intentionally omits the
+    # idx — most systems have 0 or 1 accelerators; the count line
+    # above disambiguates if there are several. Device name may be
+    # 0 (null) when ai-hwaccel's backend skipped profile_set_device_name
+    # (known gap in detect_rocm as of 2.2.5; fall back to (unnamed)).
+    var gi = 0;
+    while (gi < ngpu) {
+        var name = mihi_gpu_name(gi);
+        var mem_b: i64 = mihi_gpu_memory_bytes(gi);
+        if (name == 0) {
+            print("gpu:     ", 9); println("(unnamed)");
+        } else {
+            print("gpu:     ", 9); println(name);
+        }
+        if (mem_b > 0) {
+            print("gpu MiB: ", 9); println_int(mem_b / 1048576);
+        }
+        gi = gi + 1;
+    }
+
     println("mihi smoke ok");
     return 0;
 }

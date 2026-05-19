@@ -51,21 +51,36 @@ buffers, no probe-internal allocation.
 - **Acceptance**: smoke prints `hostname / distro / uptime` lines on
   Linux.
 
-### M3 — GPU probe (v0.4.0)
+### M3 — GPU probe (v0.4.0) ✅ shipped 2026-05-19
 
-- `mihi_gpu_*` family — consume
-  [`ai-hwaccel`](https://github.com/MacCracken/ai-hwaccel) for the
-  canonical GPU detection surface.
-- Single source per the *one source per fact* principle — no
-  fallback chain to `lspci` / nvidia-smi / etc.
-- **Dep gate**: `ai-hwaccel` ships a `[lib].modules` surface (parallel
-  to mihi's own reshape) so mihi can `include` the detection
-  primitives via `cyrius deps` rather than shelling out — the no-exec
-  rule rules out consuming the binary. As of 2026-05-19, ai-hwaccel
-  2.2.3 is on the cyrius 6.0.0 pin but is still binary-shaped; the
-  reshape is the active blocker.
-- **Acceptance**: smoke prints GPU vendor + model on a NUC AMD
-  system.
+- ✅ `mihi_gpu_*` family — 5 probes (`mihi_gpu_count` + idx-keyed
+  `mihi_gpu_{name,memory_bytes,family,type}`) wrap ai-hwaccel 2.2.5's
+  `registry_detect_no_exec()`. Module-level singleton cache means
+  one detection pass per process; subsequent calls are O(n) vec walks.
+- ✅ Single source per the *one source per fact* principle — sysfs
+  reads via ai-hwaccel; no fallback chain to `lspci` / nvidia-smi /
+  etc.
+- ✅ **Dep gate cleared 2026-05-19**: ai-hwaccel 2.2.4 added the
+  `[lib].modules` surface + `dist/ai-hwaccel.cyr` bundle; 2.2.5 added
+  the `registry_detect_no_exec()` entry point that masks off the
+  eight subprocess-shelling backends (CUDA, Apple, Vulkan, Gaudi,
+  Neuron, Intel oneAPI, Cerebras, Graphcore) and skips
+  `detect_interconnects`. Mihi pins `[deps.ai-hwaccel] tag = "2.2.5"`
+  and calls only `registry_detect_no_exec()` — the no-exec contract
+  is enforced on the ai-hwaccel side.
+- ✅ **Safe backends mihi sees**: ROCm, Intel NPU, AMD XDNA, TPU,
+  Qualcomm, Groq, Samsung NPU, MediaTek APU — plus the sysfs
+  post-passes (`enrich_bandwidth/pcie/numa`, `detect_storage`,
+  `detect_environment`).
+- ✅ **Acceptance**: smoke prints `gpu cnt: 1 / gpu: (unnamed) /
+  gpu MiB: 3072` on archaemenid (Ryzen 5800H + Radeon iGPU).
+- **Open follow-ups (ai-hwaccel 2.2.6)**:
+  - `detect_rocm` doesn't populate `profile_device_name` — name comes
+    back null; mihi correctly reports null, smoke prints "(unnamed)".
+  - `cache.cyr`'s disk-write path references `registry_to_json` from
+    the excluded `json_out.cyr` — one persistent linker warning. DCE
+    elides the call. Fix: include `json_out.cyr` in the bundle or
+    feature-gate the disk-cache code.
 
 ### M4 — First consumer integration (v0.5.0)
 

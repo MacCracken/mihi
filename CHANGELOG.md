@@ -4,6 +4,73 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-05-19
+
+**M3 — GPU probe shipped via ai-hwaccel 2.2.5 no-exec API.** mihi now
+covers the accelerator slice of the system-info surface. Five probes
+(`mihi_gpu_count` + `mihi_gpu_{name,memory_bytes,family,type}(idx)`)
+let consumers list local GPUs / NPUs / TPUs / ASICs without any
+subprocess spawning. The eight subprocess-shelling backends in
+ai-hwaccel (CUDA, Apple, Vulkan, Gaudi, Neuron, Intel oneAPI,
+Cerebras, Graphcore) are masked off ai-hwaccel-side by
+`builder_no_exec()` before any detector runs — so mihi's "probes are
+pure reads" rule is preserved end-to-end, not via mihi-side
+discipline. Eight sysfs/syscall backends remain reachable: ROCm,
+Intel NPU, AMD XDNA, TPU, Qualcomm, Groq, Samsung NPU, MediaTek APU.
+
+### Added
+- **Slice E — accelerator identity probes** (new module `src/gpu.cyr`):
+  - `mihi_gpu_count(): i64` — count of detected accelerators (the
+    synthetic CPU profile ai-hwaccel always emits is excluded). Lazy-
+    initializes the module-level registry singleton on first call.
+  - `mihi_gpu_name(idx): cstring` — device name from
+    `profile_device_name`. Returns 0 if idx is out of range OR if the
+    backing detector didn't populate the name (known gap in
+    ai-hwaccel 2.2.5 `detect_rocm` — file an issue for 2.2.6).
+  - `mihi_gpu_memory_bytes(idx): i64` — total accelerator memory.
+    Returns 0 - 1 if idx out of range.
+  - `mihi_gpu_family(idx): i64` — `FAMILY_GPU` / `FAMILY_NPU` /
+    `FAMILY_TPU` / `FAMILY_AI_ASIC`. Returns 0 - 1 on bad idx.
+  - `mihi_gpu_type(idx): i64` — precise `ACCEL_*` constant (one of
+    the 18 variants from ai-hwaccel's `AcceleratorType` enum, but
+    only the eight no-exec types are reachable under the safe mask).
+- **Tests** (`tests/mihi.tcyr`) — synthetic-registry happy paths
+  (CPU-only → count 0; CPU + ROCm → count 1, all accessors resolve),
+  out-of-range idx returns sentinels (null / -1), live
+  `registry_detect_no_exec()` smoke. Suite grows 59 → 75 assertions.
+- **Smoke binary** (`programs/smoke.cyr`) — prints `gpu cnt:` line
+  plus one `gpu: <name>` + `gpu MiB: <mem>` pair per accelerator.
+  On a Ryzen 5800H with Radeon iGPU: `gpu cnt: 1` / `gpu MiB: 3072`.
+
+### Changed
+- **`VERSION`**: 0.3.0 → 0.4.0.
+- **`cyrius.cyml`**:
+  - `[lib].modules` — `src/gpu.cyr` appended (last in include order).
+  - `[deps]` stdlib — added `fs`, `tagged`, `process`, `fnptr`,
+    `thread`, `freelist`, `hashmap`, `ct`, `json`. Required by
+    bundled-but-unused modules inside `dist/ai-hwaccel.cyr`
+    (cache.cyr, lazy.cyr, async_detect.cyr, detect/command.cyr).
+    DCE drops the unused code from the linked binary.
+  - `[deps.ai-hwaccel]` — new block pinning ai-hwaccel `tag = "2.2.5"`
+    via `modules = ["dist/ai-hwaccel.cyr"]`. First non-stdlib mihi
+    dependency beyond agnosys.
+
+### Known Issues
+- **One linker warning** — `undefined function 'registry_to_json'`
+  is referenced from `cache.cyr`'s disk-write path in the ai-hwaccel
+  2.2.5 bundle. The defining module (`src/json_out.cyr`) is excluded
+  from `cyrius distlib` per ai-hwaccel's CLI/lib partition, leaving
+  a dangling reference. DCE elides the call (mihi never reaches it),
+  so the binary is correct, but the warning is noise. To be fixed
+  on the ai-hwaccel side in 2.2.6 (either include `json_out.cyr` in
+  the bundle or gate the disk-cache code on a feature flag).
+- **ROCm device names empty** — `detect_rocm` in ai-hwaccel 2.2.5
+  never calls `profile_set_device_name`, so `mihi_gpu_name(idx)`
+  returns null for ROCm GPUs. mihi correctly reports null rather
+  than fabricating a name; smoke output shows "(unnamed)". Fix
+  belongs in ai-hwaccel 2.2.6 — read e.g. `/sys/class/drm/cardN/
+  device/product_name` or similar.
+
 ## [0.3.0] — 2026-05-19
 
 M2 complete. mihi closes the "tell me about this box" surface for the

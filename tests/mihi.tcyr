@@ -421,6 +421,59 @@ fn main() {
     assert(live_dist != 0, "live /etc/os-release yields a distro string");
     assert(strlen(live_dist) > 0, "live distro string non-empty");
 
+    # ----- gpu.cyr — synthetic registry, CPU only -------------------
+    # mihi_gpu_count() must exclude the synthetic CPU profile that
+    # ai-hwaccel always emits at the head of the registry. Build a
+    # CPU-only registry and assert count == 0. Reaches into the
+    # module-level singleton _mihi_gpu_registry directly so we don't
+    # have to first run real detection.
+    test_group("gpu.cyr — CPU-only registry shows zero accelerators");
+    _mihi_gpu_registry = registry_new();
+    reg_add_profile(_mihi_gpu_registry, profile_cpu(8 * 1073741824));
+    var n_cpu_only: i64 = mihi_gpu_count();
+    assert_eq(n_cpu_only, 0, "CPU profile excluded from gpu count");
+    assert_eq(mihi_gpu_name(0), 0, "name(0) → null on empty accel set");
+    assert_eq(mihi_gpu_memory_bytes(0), 0 - 1, "memory(0) → -1 on empty");
+    assert_eq(mihi_gpu_family(0), 0 - 1, "family(0) → -1 on empty");
+    assert_eq(mihi_gpu_type(0), 0 - 1, "type(0) → -1 on empty");
+
+    # ----- gpu.cyr — synthetic registry with one ROCm GPU ------------
+    # CPU + ROCm. mihi_gpu_count must return 1 (CPU hidden, ROCm at
+    # idx 0). All four per-idx accessors should resolve.
+    test_group("gpu.cyr — CPU + one ROCm GPU");
+    _mihi_gpu_registry = registry_new();
+    reg_add_profile(_mihi_gpu_registry, profile_cpu(16 * 1073741824));
+    var rocm_p = profile_new(ACCEL_ROCM, 0, 4 * 1073741824);
+    profile_set_device_name(rocm_p, "Synthetic Radeon");
+    reg_add_profile(_mihi_gpu_registry, rocm_p);
+    assert_eq(mihi_gpu_count(), 1, "1 accelerator (CPU excluded)");
+    assert_eq(streq(mihi_gpu_name(0), "Synthetic Radeon"), 1, "name at idx 0");
+    assert_eq(mihi_gpu_memory_bytes(0), 4 * 1073741824, "memory at idx 0 = 4 GiB");
+    assert_eq(mihi_gpu_family(0), FAMILY_GPU, "family at idx 0 = GPU");
+    assert_eq(mihi_gpu_type(0), ACCEL_ROCM, "type at idx 0 = ROCM");
+
+    # ----- gpu.cyr — out-of-range idx returns sentinels --------------
+    # idx beyond the count is not a fatal error; consumers can iterate
+    # idx in [0, count) and per-idx accessors return null / -1 for
+    # any out-of-range probe (defensive contract for caller bugs).
+    test_group("gpu.cyr — out-of-range idx returns sentinels");
+    assert_eq(mihi_gpu_name(1), 0, "name(count) → null");
+    assert_eq(mihi_gpu_memory_bytes(1), 0 - 1, "memory(count) → -1");
+    assert_eq(mihi_gpu_family(1), 0 - 1, "family(count) → -1");
+    assert_eq(mihi_gpu_type(1), 0 - 1, "type(count) → -1");
+    assert_eq(mihi_gpu_name(99), 0, "name(huge idx) → null");
+
+    # ----- gpu.cyr — real registry_detect_no_exec --------------------
+    # Reset the singleton and let mihi_gpu_count() rebuild via
+    # registry_detect_no_exec(). On any box (with or without
+    # accelerators) the count is non-negative and the call doesn't
+    # crash. We can't pin a specific count — depends on the host —
+    # so this is a smoke-level integration check.
+    test_group("gpu.cyr — live registry_detect_no_exec smoke");
+    _mihi_gpu_registry = 0;
+    var n_live: i64 = mihi_gpu_count();
+    assert(n_live >= 0, "live gpu count is non-negative");
+
     return assert_summary();
 }
 
