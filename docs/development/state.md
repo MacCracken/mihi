@@ -5,6 +5,11 @@
 
 ## Version
 
+**0.4.1** — released 2026-05-19. Dep-pin refresh: ai-hwaccel 2.2.5 →
+2.2.6. Closes both Known Issues from 0.4.0 — ROCm device name now
+populates (`AMD Radeon (PCI 0x1002:0x1638)` on archaemenid) and the
+`registry_to_json` linker warning is gone. No mihi source changes.
+
 **0.4.0** — released 2026-05-19. M3 complete: accelerator-identity
 probes via ai-hwaccel 2.2.5's no-exec API. mihi now covers kernel /
 CPU / memory / host-identity / accelerators — the full v1.0 probe
@@ -65,10 +70,9 @@ cyrius build programs/smoke.cyr build/mihi-smoke
 cyrius test             # 75/75 pass
 ```
 
-One persistent linker warning: `undefined function 'registry_to_json'`
-— a dangling reference in the ai-hwaccel 2.2.5 bundle (cache.cyr's
-disk-write path; json_out.cyr is excluded). DCE elides the call.
-To be fixed in ai-hwaccel 2.2.6.
+Build is clean as of 0.4.1 / ai-hwaccel 2.2.6 — only the cyrius
+toolchain-pin-drift note remains (cosmetic; 6.0.0 pin matches 6.0.0
+cycc, snapshot just predates the warning suppression).
 
 ## Dependencies
 
@@ -76,7 +80,7 @@ Direct (declared in `cyrius.cyml`):
 
 - **stdlib** — string, fmt, alloc, io, vec, str, slice, syscalls, assert, agnosys, plus (added for the ai-hwaccel bundle) fs, tagged, process, fnptr, thread, freelist, hashmap, ct, json. DCE drops unused code from the linked binary.
 - **agnosys** — Result-based wrapper over `uname(2)` / `sysinfo(2)`. mihi's uname-backed probes share one syscall through `agnosys_uname`. See [ADR 0001](../adr/0001-shared-uts-buffer.md).
-- **ai-hwaccel 2.2.5** — accelerator detection. mihi pins the first release with the no-exec contract (`registry_detect_no_exec()` masks off the eight subprocess-shelling backends). Without it mihi couldn't honor the "probes are pure reads" rule.
+- **ai-hwaccel 2.2.6** — accelerator detection. 2.2.5 was the first release with the no-exec contract (`registry_detect_no_exec()` masks off the eight subprocess-shelling backends); 2.2.6 closed the device-name + bundling gaps mihi's 0.4.0 integration surfaced. Without the no-exec contract mihi couldn't honor the "probes are pure reads" rule.
 
 ## Consumers
 

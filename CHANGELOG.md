@@ -4,6 +4,36 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-05-19
+
+**ai-hwaccel pin bump: 2.2.5 → 2.2.6 — closes both Known Issues from
+0.4.0.** No mihi-side code changed; this is purely a dependency
+refresh that picks up upstream fixes for the two gaps mihi 0.4.0
+flagged in its CHANGELOG. After bumping, `mihi_gpu_name` returns a
+populated string on ROCm devices instead of null, and the persistent
+linker warning is gone.
+
+### Changed
+- **`cyrius.cyml`**: `[deps.ai-hwaccel] tag = "2.2.5"` → `"2.2.6"`.
+- **`dist/mihi.cyr`**: regenerated. No mihi source changes — only the
+  pinned dep version moves.
+
+### Fixed (via ai-hwaccel 2.2.6)
+- `mihi_gpu_name(idx)` now returns the device name for ROCm GPUs
+  (ai-hwaccel's `detect_rocm` populates `profile_device_name` from
+  `/sys/class/drm/cardN/device/product_name`, falling back to a
+  synthesized `AMD Radeon (PCI vendor:device)` string). On
+  archaemenid the smoke binary now prints
+  `gpu: AMD Radeon (PCI 0x1002:0x1638)` instead of `gpu: (unnamed)`.
+- The `undefined function 'registry_to_json'` linker warning is gone —
+  ai-hwaccel 2.2.6 includes `src/json_out.cyr` in its bundle so the
+  symbol resolves. DCE still elides the call (mihi doesn't use the
+  serializer); binary output is unchanged.
+- Same upstream fix populates `device_name` for three other
+  detectors (TPU, Gaudi, Neuron) — mihi doesn't reach these on
+  archaemenid but the gap is closed for any consumer running on
+  cloud accelerators.
+
 ## [0.4.0] — 2026-05-19
 
 **M3 — GPU probe shipped via ai-hwaccel 2.2.5 no-exec API.** mihi now
@@ -55,21 +85,20 @@ Intel NPU, AMD XDNA, TPU, Qualcomm, Groq, Samsung NPU, MediaTek APU.
     via `modules = ["dist/ai-hwaccel.cyr"]`. First non-stdlib mihi
     dependency beyond agnosys.
 
-### Known Issues
-- **One linker warning** — `undefined function 'registry_to_json'`
+### Known Issues (resolved in 0.4.1 via ai-hwaccel 2.2.6)
+- ~~**One linker warning** — `undefined function 'registry_to_json'`
   is referenced from `cache.cyr`'s disk-write path in the ai-hwaccel
   2.2.5 bundle. The defining module (`src/json_out.cyr`) is excluded
   from `cyrius distlib` per ai-hwaccel's CLI/lib partition, leaving
   a dangling reference. DCE elides the call (mihi never reaches it),
-  so the binary is correct, but the warning is noise. To be fixed
-  on the ai-hwaccel side in 2.2.6 (either include `json_out.cyr` in
-  the bundle or gate the disk-cache code on a feature flag).
-- **ROCm device names empty** — `detect_rocm` in ai-hwaccel 2.2.5
+  so the binary is correct, but the warning is noise.~~ → Fixed
+  upstream in 2.2.6 by including `json_out.cyr` in the bundle.
+- ~~**ROCm device names empty** — `detect_rocm` in ai-hwaccel 2.2.5
   never calls `profile_set_device_name`, so `mihi_gpu_name(idx)`
   returns null for ROCm GPUs. mihi correctly reports null rather
-  than fabricating a name; smoke output shows "(unnamed)". Fix
-  belongs in ai-hwaccel 2.2.6 — read e.g. `/sys/class/drm/cardN/
-  device/product_name` or similar.
+  than fabricating a name; smoke output shows "(unnamed)".~~ → Fixed
+  upstream in 2.2.6: prefers `product_name` sysfs file, falls back
+  to a synthesized `AMD Radeon (PCI vendor:device)` string.
 
 ## [0.3.0] — 2026-05-19
 
