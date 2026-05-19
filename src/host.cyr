@@ -1,19 +1,150 @@
-# mihi/host — host-identity probes.
+# mihi/host — host identity probes.
 #
-# Sources: gethostname(2), /proc/uptime, /etc/os-release. Scaffold
-# stage: stubs.
+# Three small probes that close the "tell me about this box" surface
+# for the login MOTD path: hostname, system uptime, distro PRETTY_NAME.
+#
+# Sources of truth:
+#   - hostname: uname(2).nodename — shares the uts buffer the kernel /
+#     CPU-arch probes already populate (ADR 0001). One syscall covers
+#     four facts.
+#   - uptime:   /proc/uptime first whitespace-separated field, seconds
+#     with fractional precision. Kernel writes ~64 bytes — caller's
+#     scratch buffer of ~64 bytes is plenty.
+#   - distro:   /etc/os-release PRETTY_NAME (shell-style key=value with
+#     optional double-quoting). Falls back to ID when PRETTY_NAME is
+#     absent — the only fallback in mihi, justified because the
+#     freedesktop spec marks PRETTY_NAME as recommended-not-required
+#     and ID is the mandatory minimum. /etc/os-release is small (~1 kB
+#     in practice) so a 1 KiB scratch buffer is sufficient.
+#
+# AGNOS-native: hostname will come from the boot-info struct alongside
+# the other uname facts; uptime from a future agnosys clock primitive;
+# distro is a Linux-userland concept (the file lives in initramfs/root)
+# and is not on the native code path.
 
-fn mihi_hostname(): i64 {
-    # TODO: gethostname(2) into a static buffer; return pointer
-    return 0;
+# ----- mihi_hostname — uname.nodename --------------------------------
+
+# Return a pointer to the null-terminated nodename field within `uts`.
+# Caller must have already filled `uts` via mihi_uname.
+# Source: utsname.nodename (offset 65, see agnosys UTS_NODENAME) —
+# kernel UTS namespace, set by sethostname(2) at boot. On systems
+# without a hostname configured the kernel reports "(none)".
+# Returns cstring so println() dispatches to the string overload.
+fn mihi_hostname(uts): cstring {
+    return uts + UTS_NODENAME;
 }
 
-fn mihi_uptime_secs(): i64 {
-    # TODO: parse first field of /proc/uptime, return whole seconds
-    return 0;
+# ----- mihi_uptime_secs — /proc/uptime first field -------------------
+
+# Parse the integer-seconds prefix of a /proc/uptime buffer: digits
+# accumulate until any non-digit byte (typically '.' for the fractional
+# part, ' ' between fields, or '\n'). Returns 0 - 1 if no leading
+# digit. Pure parser — exposed for unit tests.
+# Source: kernel fs/proc/uptime.c::uptime_proc_show — writes
+# "%lu.%02lu %lu.%02lu\n" (uptime seconds + idle seconds).
+fn mihi_parse_uptime_secs(buf, len): i64 {
+    if (len <= 0) { return 0 - 1; }
+    var p = 0;
+    var v = 0;
+    var has = 0;
+    while (p < len && load8(buf + p) >= 48 && load8(buf + p) <= 57) {
+        v = v * 10 + (load8(buf + p) - 48);
+        has = 1;
+        p = p + 1;
+    }
+    if (has == 0) { return 0 - 1; }
+    return v;
 }
 
-fn mihi_distro(): i64 {
-    # TODO: parse PRETTY_NAME from /etc/os-release; fall back to ID
-    return 0;
+# Read /proc/uptime into the caller-supplied `buf` (capacity `cap`,
+# recommend 64 — file is ~32 bytes), parse the first whitespace-
+# separated field as decimal seconds, drop the fractional part.
+# Returns 0 - 1 on open/read/parse failure.
+# Source: man 5 proc; kernel fs/proc/uptime.c::uptime_proc_show().
+fn mihi_uptime_secs(buf, cap): i64 {
+    var fd = sys_open("/proc/uptime", O_RDONLY, 0);
+    if (fd < 0) { return 0 - 1; }
+    var n = sys_read(fd, buf, cap);
+    sys_close(fd);
+    if (n <= 0) { return 0 - 1; }
+    return mihi_parse_uptime_secs(buf, n);
+}
+
+# ----- mihi_distro — /etc/os-release PRETTY_NAME / ID ----------------
+
+# Find a line-anchored shell-style assignment in `buf`. `key` is the
+# bare key with trailing '=' (e.g. "PRETTY_NAME="). Match position
+# must be at offset 0 or be preceded by '\n'. Returns the offset of
+# the first value byte (past the '='), or 0 - 1 if not found.
+# Pure function — exposed for unit tests against synthetic buffers.
+fn mihi_find_osrelease_key(buf, len, key, key_len): i64 {
+    var i = 0;
+    var found = 0 - 1;
+    while (i + key_len <= len && found == 0 - 1) {
+        var anchored = 0;
+        if (i == 0) { anchored = 1; }
+        if (i > 0 && load8(buf + i - 1) == 10) { anchored = 1; }
+        if (anchored == 1) {
+            var matched = 1;
+            var j = 0;
+            while (j < key_len && matched == 1) {
+                if (load8(buf + i + j) != load8(key + j)) { matched = 0; }
+                j = j + 1;
+            }
+            if (matched == 1) { found = i + key_len; }
+        }
+        i = i + 1;
+    }
+    return found;
+}
+
+# Given an offset `start` pointing at the first byte of a value in an
+# os-release buffer, null-terminate the value in place and return a
+# cstring pointer to its first character. Handles the two shapes the
+# spec allows: `KEY="quoted value"` and `KEY=bare-token`. For quoted
+# values, the closing '"' is overwritten with NUL; for bare values,
+# the trailing '\n' (or EOF) is overwritten. Returns 0 if the value
+# is empty or unterminated.
+# Mutates `buf` (writes one NUL byte).
+# Source: freedesktop os-release(5) — values may be double-quoted;
+# bare tokens disallow shell metacharacters.
+fn mihi_parse_osrelease_value(buf, len, start): cstring {
+    if (start >= len) { return 0; }
+    var p = start;
+    var v = p;
+    var quoted = 0;
+    if (load8(buf + p) == 34) {
+        quoted = 1;
+        p = p + 1;
+        v = p;
+        while (p < len && load8(buf + p) != 34) { p = p + 1; }
+    } else {
+        while (p < len && load8(buf + p) != 10) { p = p + 1; }
+    }
+    if (p >= len) { return 0; }
+    if (v == p) { return 0; }
+    store8(buf + p, 0);
+    return buf + v;
+}
+
+# Read /etc/os-release into the caller-supplied `buf` (capacity `cap`,
+# recommend 1024 — file is typically ~500 bytes), parse PRETTY_NAME.
+# Falls back to ID when PRETTY_NAME is absent — the only fallback in
+# mihi, justified because the freedesktop spec marks PRETTY_NAME as
+# recommended-not-required and ID as the mandatory minimum every
+# distro must ship. Returns cstring ptr into `buf` (null-terminated
+# in place), or 0 (null) on open/read/parse failure.
+# Source: man 5 os-release; freedesktop.org/software/systemd/man/os-release.html.
+fn mihi_distro(buf, cap): cstring {
+    var fd = sys_open("/etc/os-release", O_RDONLY, 0);
+    if (fd < 0) { return 0; }
+    var n = sys_read(fd, buf, cap);
+    sys_close(fd);
+    if (n <= 0) { return 0; }
+    var start = mihi_find_osrelease_key(buf, n, "PRETTY_NAME=", 12);
+    if (start < 0) {
+        start = mihi_find_osrelease_key(buf, n, "ID=", 3);
+    }
+    if (start < 0) { return 0; }
+    return mihi_parse_osrelease_value(buf, n, start);
 }

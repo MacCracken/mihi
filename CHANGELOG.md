@@ -4,6 +4,45 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-05-19
+
+M2 complete. mihi closes the "tell me about this box" surface for the
+login MOTD path — hostname rides the existing uts buffer from M1, and
+two new `/proc` + `/etc` probes deliver uptime and distro name. No new
+dependencies (stdlib + agnosys still cover everything). M3 is the GPU
+probe via `ai-hwaccel`.
+
+### Added
+- **Slice D — host identity probes** (per
+  [ADR 0001](docs/adr/0001-shared-uts-buffer.md) for the uname-backed
+  one):
+  - `mihi_hostname(uts)` — `utsname.nodename` (offset 65). Reuses the
+    same uts buffer the kernel + CPU-arch probes fill, so a consumer
+    pays one `uname(2)` for four facts.
+  - `mihi_uptime_secs(buf, cap)` — integer seconds from
+    `/proc/uptime` first whitespace-separated field. Fractional part
+    dropped. Caller supplies 64-byte scratch.
+  - `mihi_distro(buf, cap)` — `PRETTY_NAME` from `/etc/os-release`
+    with `ID` fallback (the only fallback chain in mihi — justified
+    by the os-release spec marking `PRETTY_NAME` as
+    recommended-not-required and `ID` as mandatory). Caller supplies
+    1 KiB scratch; probe handles quote-stripping in place.
+  - `mihi_parse_uptime_secs(buf, len)` — pure parser for the integer
+    prefix; exposed for unit tests.
+  - `mihi_find_osrelease_key(buf, len, key, key_len)` — line-anchored
+    key finder, twin of `mihi_find_meminfo_field`.
+  - `mihi_parse_osrelease_value(buf, len, start)` — value parser
+    handling both `KEY="quoted"` and `KEY=bare` shapes; mutates the
+    buffer to null-terminate.
+- Smoke binary now prints `host` / `uptime` / `distro` lines (9
+  total facts).
+- `docs/sources.md` gains a Slice D table covering the three M2
+  probes.
+- Test suite: 59 assertions across 24 groups (22 new in M2) —
+  synthetic-buffer parser unit tests + real `/proc/uptime` /
+  `/etc/os-release` / `uname(2)` happy paths + missing/malformed
+  rejection.
+
 ## [0.2.0] — 2026-05-19
 
 M1 complete. mihi ships its planned Linux-side CPU/kernel/memory

@@ -235,6 +235,192 @@ fn main() {
     assert(live_free > 0, "live MemAvailable > 0 bytes");
     assert(live_free <= live_total, "MemAvailable <= MemTotal");
 
+    # ----- host.cyr — mihi_hostname uts.nodename accessor -----------
+    # Shares the uts buffer with the kernel/cpu probes (ADR 0001).
+    # Field offset for nodename is 65; verify the accessor returns
+    # that exact pointer via a sentinel round-trip on a synthetic uts.
+    test_group("host.cyr — mihi_hostname uts.nodename accessor");
+    var huts[390];
+    var hi = 0;
+    while (hi < 390) { store8(&huts + hi, 0); hi = hi + 1; }
+    store8(&huts + UTS_NODENAME, 72);  # 'H'
+    var hn = mihi_hostname(&huts);
+    assert_eq(load8(hn), 72, "mihi_hostname reads synthetic 'H' from nodename slot");
+
+    # Real uname: any Linux box has a non-empty nodename ("(none)" on
+    # boxes without sethostname is still non-null first byte).
+    test_group("host.cyr — mihi_hostname real uname");
+    var luts[390];
+    var li = 0;
+    while (li < 390) { store8(&luts + li, 0); li = li + 1; }
+    var hres = mihi_uname(&luts);
+    assert_eq(is_err_result(hres), 0, "uname(2) Ok for hostname probe");
+    var live_hn = mihi_hostname(&luts);
+    assert(load8(live_hn) != 0, "live nodename first byte non-null");
+
+    # ----- host.cyr — mihi_parse_uptime_secs ------------------------
+    # Pure parser. Accepts the "%lu.%02lu" prefix the kernel writes;
+    # drops the fractional part. Rejects empty / no-leading-digit.
+    test_group("host.cyr — mihi_parse_uptime_secs shapes");
+
+    # "12345.67 13611.75\n" → 12345
+    var u1 = "12345.67 13611.75\n";
+    var u1_buf[32];
+    var u1_len: i64 = strlen(u1);
+    var u1_i = 0;
+    while (u1_i < u1_len) {
+        store8(&u1_buf + u1_i, load8(u1 + u1_i));
+        u1_i = u1_i + 1;
+    }
+    assert_eq(mihi_parse_uptime_secs(&u1_buf, u1_len), 12345,
+              "'12345.67 …' → 12345 secs (fractional dropped)");
+
+    # "0.50 0.10\n" → 0 (valid; box just booted)
+    var u2 = "0.50 0.10\n";
+    var u2_buf[16];
+    var u2_len: i64 = strlen(u2);
+    var u2_i = 0;
+    while (u2_i < u2_len) {
+        store8(&u2_buf + u2_i, load8(u2 + u2_i));
+        u2_i = u2_i + 1;
+    }
+    assert_eq(mihi_parse_uptime_secs(&u2_buf, u2_len), 0,
+              "'0.50 …' → 0 secs (freshly booted)");
+
+    # Empty buffer → -1
+    var u3[4];
+    assert_eq(mihi_parse_uptime_secs(&u3, 0), 0 - 1,
+              "empty buffer → -1");
+
+    # Leading non-digit → -1
+    var u4 = "abc";
+    var u4_buf[8];
+    store8(&u4_buf + 0, load8(u4 + 0));
+    store8(&u4_buf + 1, load8(u4 + 1));
+    store8(&u4_buf + 2, load8(u4 + 2));
+    assert_eq(mihi_parse_uptime_secs(&u4_buf, 3), 0 - 1,
+              "leading non-digit → -1");
+
+    # ----- host.cyr — mihi_uptime_secs real /proc/uptime ------------
+    test_group("host.cyr — mihi_uptime_secs real /proc/uptime");
+    var up_buf[64];
+    var live_up: i64 = mihi_uptime_secs(&up_buf, 64);
+    assert(live_up >= 0, "live /proc/uptime parsed (>= 0 secs)");
+
+    # ----- host.cyr — mihi_find_osrelease_key anchors --------------
+    # Same line-anchor contract as meminfo: file-start or '\n'-prefix.
+    # Mid-line "PRETTY_NAME=" must be rejected.
+    test_group("host.cyr — find_osrelease_key anchors");
+    var or1 = "NAME=\"Arch Linux\"\nPRETTY_NAME=\"Arch Linux\"\nID=arch\n";
+    var or1_buf[128];
+    var or1_len: i64 = strlen(or1);
+    var or1_i = 0;
+    while (or1_i < or1_len) {
+        store8(&or1_buf + or1_i, load8(or1 + or1_i));
+        or1_i = or1_i + 1;
+    }
+    var pos_name: i64 = mihi_find_osrelease_key(&or1_buf, or1_len, "NAME=", 5);
+    var pos_pretty: i64 = mihi_find_osrelease_key(&or1_buf, or1_len, "PRETTY_NAME=", 12);
+    var pos_id: i64 = mihi_find_osrelease_key(&or1_buf, or1_len, "ID=", 3);
+    assert_eq(pos_name, 5, "NAME= at file-start matched");
+    assert(pos_pretty > pos_name, "PRETTY_NAME= found after NAME=");
+    assert(pos_id > pos_pretty, "ID= found after PRETTY_NAME=");
+
+    # Mid-line "PRETTY_NAME=" must be rejected. Use a buffer that has
+    # 'X' as the first byte to force the leading-anchor check to fail.
+    var or2 = "XPRETTY_NAME=foo\n";
+    var or2_buf[32];
+    var or2_len: i64 = strlen(or2);
+    var or2_i = 0;
+    while (or2_i < or2_len) {
+        store8(&or2_buf + or2_i, load8(or2 + or2_i));
+        or2_i = or2_i + 1;
+    }
+    var pos_midline: i64 = mihi_find_osrelease_key(&or2_buf, or2_len, "PRETTY_NAME=", 12);
+    assert_eq(pos_midline, 0 - 1, "mid-line 'PRETTY_NAME=' rejected");
+
+    # Missing key → -1
+    var pos_missing: i64 = mihi_find_osrelease_key(&or1_buf, or1_len, "MISSING=", 8);
+    assert_eq(pos_missing, 0 - 1, "missing key → -1");
+
+    # ----- host.cyr — mihi_parse_osrelease_value quoted + bare -----
+    # parse_osrelease_value mutates the buffer (writes one NUL). Use
+    # fresh buffers per shape so prior tests don't see the mutation.
+    test_group("host.cyr — parse_osrelease_value quoted + bare");
+
+    # Quoted: PRETTY_NAME="Arch Linux"
+    var vq = "PRETTY_NAME=\"Arch Linux\"\nID=arch\n";
+    var vq_buf[64];
+    var vq_len: i64 = strlen(vq);
+    var vq_i = 0;
+    while (vq_i < vq_len) {
+        store8(&vq_buf + vq_i, load8(vq + vq_i));
+        vq_i = vq_i + 1;
+    }
+    var vq_start: i64 = mihi_find_osrelease_key(&vq_buf, vq_len, "PRETTY_NAME=", 12);
+    var vq_val = mihi_parse_osrelease_value(&vq_buf, vq_len, vq_start);
+    assert(vq_val != 0, "quoted value parsed");
+    assert_eq(streq(vq_val, "Arch Linux"), 1, "quoted value == 'Arch Linux'");
+
+    # Bare: ID=arch
+    var vb = "ID=arch\nNAME=foo\n";
+    var vb_buf[32];
+    var vb_len: i64 = strlen(vb);
+    var vb_i = 0;
+    while (vb_i < vb_len) {
+        store8(&vb_buf + vb_i, load8(vb + vb_i));
+        vb_i = vb_i + 1;
+    }
+    var vb_start: i64 = mihi_find_osrelease_key(&vb_buf, vb_len, "ID=", 3);
+    var vb_val = mihi_parse_osrelease_value(&vb_buf, vb_len, vb_start);
+    assert(vb_val != 0, "bare value parsed");
+    assert_eq(streq(vb_val, "arch"), 1, "bare value == 'arch'");
+
+    # Empty quoted: PRETTY_NAME=""
+    var ve = "PRETTY_NAME=\"\"\nID=foo\n";
+    var ve_buf[32];
+    var ve_len: i64 = strlen(ve);
+    var ve_i = 0;
+    while (ve_i < ve_len) {
+        store8(&ve_buf + ve_i, load8(ve + ve_i));
+        ve_i = ve_i + 1;
+    }
+    var ve_start: i64 = mihi_find_osrelease_key(&ve_buf, ve_len, "PRETTY_NAME=", 12);
+    var ve_val = mihi_parse_osrelease_value(&ve_buf, ve_len, ve_start);
+    assert_eq(ve_val, 0, "empty quoted value → null");
+
+    # ----- host.cyr — mihi_distro PRETTY_NAME → ID fallback --------
+    # Build a synthetic os-release with only ID=; the probe wrapper
+    # walks PRETTY_NAME first, then falls back to ID. This is the only
+    # fallback chain in mihi — justified because the spec marks
+    # PRETTY_NAME as recommended-not-required, ID as mandatory.
+    # (Pure parser path — no /etc/os-release read; we exercise the
+    # fallback via the public mihi_distro entry would need to mock the
+    # file, so we test the helpers directly here and rely on the
+    # real-file test below for end-to-end.)
+    test_group("host.cyr — mihi_distro ID fallback (helper composition)");
+    var fb = "ID=arch\nNAME=foo\n";
+    var fb_buf[32];
+    var fb_len: i64 = strlen(fb);
+    var fb_i = 0;
+    while (fb_i < fb_len) {
+        store8(&fb_buf + fb_i, load8(fb + fb_i));
+        fb_i = fb_i + 1;
+    }
+    # PRETTY_NAME absent → -1
+    var fb_pretty: i64 = mihi_find_osrelease_key(&fb_buf, fb_len, "PRETTY_NAME=", 12);
+    assert_eq(fb_pretty, 0 - 1, "PRETTY_NAME absent in fallback fixture");
+    var fb_idpos: i64 = mihi_find_osrelease_key(&fb_buf, fb_len, "ID=", 3);
+    var fb_val = mihi_parse_osrelease_value(&fb_buf, fb_len, fb_idpos);
+    assert_eq(streq(fb_val, "arch"), 1, "ID fallback yields 'arch'");
+
+    # ----- host.cyr — mihi_distro real /etc/os-release -------------
+    test_group("host.cyr — mihi_distro real /etc/os-release");
+    var dist_buf[1024];
+    var live_dist = mihi_distro(&dist_buf, 1024);
+    assert(live_dist != 0, "live /etc/os-release yields a distro string");
+    assert(strlen(live_dist) > 0, "live distro string non-empty");
+
     return assert_summary();
 }
 

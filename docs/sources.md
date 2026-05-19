@@ -47,11 +47,25 @@ Field anchor accepts file-start (MemTotal is the first line) and
 | `mihi_mem_total`  | `/proc/meminfo` `MemTotal:`           | man 5 proc; kernel `fs/proc/meminfo.c::meminfo_proc_show()`                                 | Always present on Linux; file-start anchored. Caller supplies 4 kB scratch (meminfo ≈ 1.5 kB). |
 | `mihi_mem_free`   | `/proc/meminfo` `MemAvailable:`       | kernel commit 34e431b0ae39 (3.14+); `fs/proc/meminfo.c`                                     | Picked over `MemFree:` because MemAvailable counts reclaimable cache/slab — the kernel's own "actually usable" estimate that monitoring tools surface as "free". |
 
-## Pending (filled as M2/M3 land)
+## Slice D — host-identity probes (M2, v0.3.0)
+
+`mihi_hostname` rides the shared 390-byte uts buffer (ADR 0001) — same
+`uname(2)` call as `mihi_kernel_name` / `_version` / `mihi_cpu_arch`,
+one syscall for four facts. `mihi_uptime_secs` and `mihi_distro` follow
+the caller-supplied scratch-buffer convention. `mihi_distro` is the
+only probe with a fallback chain (PRETTY_NAME → ID); the spec marks
+PRETTY_NAME as recommended-not-required and ID as mandatory, so the
+fallback is constrained to the same authority rather than crossing
+sources.
+
+| Probe              | Source                                              | Authority                                                                                | Notes |
+| ------------------ | --------------------------------------------------- | ---------------------------------------------------------------------------------------- | ----- |
+| `mihi_hostname`    | `uname(2)` → `utsname.nodename`                     | man 2 uname; `<asm-generic/utsname.h>`; kernel UTS namespace set by `sethostname(2)`     | 65-byte buffer at offset 65. Reports `"(none)"` on boxes without a configured hostname. |
+| `mihi_uptime_secs` | `/proc/uptime` first whitespace-separated field     | man 5 proc; kernel `fs/proc/uptime.c::uptime_proc_show()`                                | Format `"%lu.%02lu %lu.%02lu\n"` — wall-clock uptime then summed idle. mihi drops the fractional part. 64-byte scratch (file is ~32 bytes). |
+| `mihi_distro`      | `/etc/os-release` `PRETTY_NAME` (fallback `ID`)     | man 5 os-release; freedesktop.org/software/systemd/man/os-release.html                   | Shell-style key=value; values may be double-quoted. Caller supplies 1 KiB scratch; probe null-terminates the value in place. Only probe with a fallback — same authority, recommended→required gradient. |
+
+## Pending (filled as M3 lands)
 
 | Probe              | Planned source                                | Slice |
 | ------------------ | --------------------------------------------- | ----- |
-| `mihi_hostname`    | `uname(2)` → `utsname.nodename`               | M2    |
-| `mihi_uptime_secs` | `/proc/uptime` first field                    | M2    |
-| `mihi_distro`      | `/etc/os-release` `PRETTY_NAME`, fallback `ID` | M2    |
 | `mihi_gpu_*`       | via `ai-hwaccel` (single source)              | M3    |
