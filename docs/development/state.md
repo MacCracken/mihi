@@ -22,40 +22,42 @@ bundle order; `cyrius distlib` concatenates them into
 
 ## Source
 
-Module skeleton — all bodies are stubs returning 0.
+Slice A landed (3 uname-backed probes). Slices B/C of M1 and all of
+M2/M3 still stubs.
 
-- `src/types.cyr` — shared types (empty placeholder; MihiInfo struct lands at M1)
-- `src/cpu.cyr` — `mihi_cpu_model` / `mihi_cpu_count` / `mihi_cpu_arch`
-- `src/mem.cyr` — `mihi_mem_total` / `mihi_mem_free`
-- `src/kernel.cyr` — `mihi_kernel_name` / `mihi_kernel_version`
-- `src/host.cyr` — `mihi_hostname` / `mihi_uptime_secs` / `mihi_distro`
+- `src/types.cyr` — shared types (empty; `MihiInfo` deferred per ADR 0001)
+- `src/cpu.cyr` — `mihi_cpu_arch` ✅; `mihi_cpu_model` / `mihi_cpu_count` stubs (slice B)
+- `src/mem.cyr` — `mihi_mem_total` / `mihi_mem_free` stubs (slice C)
+- `src/kernel.cyr` — `mihi_uname` wrapper + `mihi_kernel_name` ✅ + `mihi_kernel_version` ✅
+- `src/host.cyr` — `mihi_hostname` / `mihi_uptime_secs` / `mihi_distro` stubs (M2)
 - `src/main.cyr` — convenience re-export (consumed by smoke + tests; not in distlib bundle)
-- `programs/smoke.cyr` — smoke binary; build target
+- `programs/smoke.cyr` — smoke binary; prints `kernel / release / arch`
 
 ## Tests
 
-- `tests/mihi.tcyr` — primary suite (currently empty per cyrius init defaults)
+- `tests/mihi.tcyr` — primary suite: 13 assertions across 6 test
+  groups covering slice A (real-uname happy path + zero-init buffer +
+  synthetic-buffer offset round-trip)
 - `tests/mihi.bcyr` — benchmark stub
 - `tests/mihi.fcyr` — fuzz stub
 
-M1 onward fills real cases.
+M1 slices B+C and M2 add `/proc` parser coverage.
 
 ## Build
 
 ```sh
 cyrius deps
 cyrius build programs/smoke.cyr build/mihi-smoke
-./build/mihi-smoke      # prints "mihi smoke ok", exit 0
+./build/mihi-smoke      # prints kernel / release / arch + "mihi smoke ok", exit 0
+cyrius test             # 13/13 pass
 ```
-
-`build/mihi-smoke` at M0 builds against vendored stdlib only; no
-external deps.
 
 ## Dependencies
 
 Direct (declared in `cyrius.cyml`):
 
 - stdlib — string, fmt, alloc, io, vec, str, syscalls, assert
+- **agnosys** — Result-based wrapper over `uname(2)` / `sysinfo(2)`. mihi's uname-backed probes (kernel_name / kernel_version / cpu_arch / hostname) share one syscall through `agnosys_uname` rather than each re-implementing `SYS_UNAME`. See [ADR 0001](../adr/0001-shared-uts-buffer.md).
 
 M3 will add `ai-hwaccel` for GPU probes.
 
@@ -70,5 +72,9 @@ _None yet._ Planned at v1.0:
 
 ## Next
 
-See [`roadmap.md`](roadmap.md) for the M1 → v1.0 plan. Next ship is M1
-(Linux probes: CPU + memory + kernel), targeting v0.2.0.
+See [`roadmap.md`](roadmap.md) for the M1 → v1.0 plan. Slice A of M1
+(kernel + cpu_arch via uname) is in `Unreleased`. Slice B
+(`mihi_cpu_model` from `/proc/cpuinfo`, `mihi_cpu_count` from
+`/sys/devices/system/cpu/online`) is next; then slice C
+(`mihi_mem_total` / `mihi_mem_free` from `/proc/meminfo`). v0.2.0
+cuts when all three slices ship.

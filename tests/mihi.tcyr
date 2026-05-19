@@ -1,11 +1,83 @@
-# mihi test suite
-# Stdlib auto-included via cyrius.cyml
+# mihi test suite — slice A (uname-backed probes).
+#
+# Strategy mirrors darshana: bytewise/buffer logic is exercised
+# directly with synthetic uts buffers (no real uname call), and one
+# happy-path test goes through the real syscall to prove the wrapper
+# wires up. Stdlib auto-included via cyrius.cyml.
+
+include "src/main.cyr"
 
 fn main() {
     alloc_init();
+
     test_group("smoke");
     assert(1, "true is true");
     assert_eq(1 + 1, 2, "math works");
+
+    # ----- mihi_uname — happy path -----------------------------------
+    # Real syscall on whatever box runs CI. Should land Ok(buf).
+    test_group("kernel.cyr — mihi_uname happy path");
+    var uts[390];
+    var i = 0;
+    while (i < 390) { store8(&uts + i, 0); i = i + 1; }
+    var res = mihi_uname(&uts);
+    assert_eq(is_err_result(res), 0, "uname(2) returns Ok on linux");
+
+    # Sysname is always populated on a real kernel; first byte is non-null.
+    # On Linux, sysname starts with 'L' (0x4C).
+    assert_eq(load8(&uts + UTS_SYSNAME), 76, "sysname[0] == 'L' (Linux)");
+
+    # ----- mihi_kernel_name — field-offset accessor ------------------
+    # Pure pointer arithmetic; verify the returned pointer matches
+    # uts + UTS_SYSNAME by reading the first byte through both paths.
+    test_group("kernel.cyr — mihi_kernel_name field accessor");
+    var name_ptr = mihi_kernel_name(&uts);
+    assert_eq(load8(name_ptr), load8(&uts + UTS_SYSNAME),
+              "mihi_kernel_name points at uts.sysname");
+
+    # ----- mihi_kernel_name — error path / synthetic buffer ----------
+    # Field accessor is pure pointer math — it doesn't validate that
+    # uname(2) succeeded. Caller is responsible for checking the
+    # mihi_uname Result. Verify that on a zero-init buffer, the
+    # accessor still returns the same offset (a null string in that
+    # field); this documents the "uts must be populated first" contract.
+    test_group("kernel.cyr — mihi_kernel_name on zero-init uts");
+    var zuts[390];
+    var z = 0;
+    while (z < 390) { store8(&zuts + z, 0); z = z + 1; }
+    var zname = mihi_kernel_name(&zuts);
+    assert_eq(load8(zname), 0, "zero-init uts → empty sysname");
+
+    # ----- mihi_kernel_version — field accessor + offset ------------
+    test_group("kernel.cyr — mihi_kernel_version field accessor");
+    var rel_ptr = mihi_kernel_version(&uts);
+    assert_eq(load8(rel_ptr), load8(&uts + UTS_RELEASE),
+              "mihi_kernel_version points at uts.release");
+    # Release is non-empty on a real kernel.
+    assert(load8(rel_ptr) != 0, "release[0] is non-null on linux");
+
+    # ----- mihi_cpu_arch — field accessor + offset -------------------
+    test_group("cpu.cyr — mihi_cpu_arch field accessor");
+    var arch_ptr = mihi_cpu_arch(&uts);
+    assert_eq(load8(arch_ptr), load8(&uts + UTS_MACHINE),
+              "mihi_cpu_arch points at uts.machine");
+    # Arch is non-empty on a real kernel.
+    assert(load8(arch_ptr) != 0, "machine[0] is non-null on linux");
+
+    # ----- synthetic uts — verify offsets are stable -----------------
+    # Write known sentinels into each field; confirm each accessor
+    # reads the matching sentinel back. No syscall involved.
+    test_group("uts offsets — synthetic buffer round-trip");
+    var suts[390];
+    var s = 0;
+    while (s < 390) { store8(&suts + s, 0); s = s + 1; }
+    store8(&suts + UTS_SYSNAME,  65);  # 'A'
+    store8(&suts + UTS_RELEASE,  66);  # 'B'
+    store8(&suts + UTS_MACHINE,  67);  # 'C'
+    assert_eq(load8(mihi_kernel_name(&suts)),    65, "sysname offset stable");
+    assert_eq(load8(mihi_kernel_version(&suts)), 66, "release offset stable");
+    assert_eq(load8(mihi_cpu_arch(&suts)),       67, "machine offset stable");
+
     return assert_summary();
 }
 

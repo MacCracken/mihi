@@ -41,17 +41,19 @@ and downstream consumers can pin against indefinitely.
 ### M1 — Linux probes: CPU + memory + kernel (v0.2.0)
 
 The first batch of working probes — the facts every `iam` invocation
-needs on Linux.
+needs on Linux. uname-backed probes route through `agnosys_uname`
+and share a single UTS buffer (one syscall, multiple field reads).
 
 - `mihi_cpu_model()` — parse `model name` field from `/proc/cpuinfo` (first occurrence)
 - `mihi_cpu_count()` — count logical CPUs from `/sys/devices/system/cpu/online`
-- `mihi_cpu_arch()` — `uname.machine` field
+- `mihi_cpu_arch()` — `uname.machine` (via shared agnosys_uname UTS buffer)
 - `mihi_mem_total()` — parse `MemTotal:` from `/proc/meminfo` (kB → bytes)
 - `mihi_mem_free()` — parse `MemAvailable:` from `/proc/meminfo`
-- `mihi_kernel_name()` — `uname.sysname`
-- `mihi_kernel_version()` — `uname.release`
+- `mihi_kernel_name()` — `uname.sysname` (shared UTS)
+- `mihi_kernel_version()` — `uname.release` (shared UTS)
+- ADR: `docs/adr/0001-shared-uts-buffer.md` — rationale for one-syscall-many-fields via agnosys
 - Each probe: source citation in declaring function + tests/mihi.tcyr happy + missing-file path
-- **Dep gate**: none. Stdlib only.
+- **Dep gate**: agnosys (already in `cyrius.cyml`)
 - **Acceptance**: smoke binary calls each probe, prints non-zero result on Linux.
 
 ### M2 — Host identity probes (v0.3.0)

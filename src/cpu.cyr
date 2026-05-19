@@ -1,21 +1,31 @@
 # mihi/cpu — CPU probes.
 #
-# Linux source of truth: /proc/cpuinfo for model + flags, /sys for
-# topology. Scaffold stage: stubs returning 0/null; real readers land
-# under their planned names.
+# Slice A (this file, M1): mihi_cpu_arch via uname.machine — shares
+# the caller-supplied uts buffer with kernel.cyr per ADR 0001.
+#
+# Slice B (next, M1): mihi_cpu_model + mihi_cpu_count via /proc and
+# /sys — these are still stubs returning 0. /proc/cpuinfo gives the
+# "model name" line (first occurrence; on heterogeneous big.LITTLE
+# parts we still pin to the first CPU per "one source per fact").
+# /sys/devices/system/cpu/online gives logical CPU count from a
+# range string like "0-15" — cheaper than counting cpuinfo blocks.
+
+# Return a pointer to the null-terminated machine field within `uts`.
+# Caller must have already filled `uts` via mihi_uname.
+# Source: utsname.machine (offset 260, see agnosys UTS_MACHINE) —
+# kernel arch identifier ("x86_64", "aarch64", etc.). On AGNOS-native
+# this will eventually come from the boot-info struct instead.
+# Returns cstring so println() dispatches to the string overload.
+fn mihi_cpu_arch(uts): cstring {
+    return uts + UTS_MACHINE;
+}
 
 fn mihi_cpu_model(): i64 {
-    # TODO: parse "model name" from /proc/cpuinfo
+    # TODO (slice B): parse "model name" from /proc/cpuinfo first block
     return 0;
 }
 
 fn mihi_cpu_count(): i64 {
-    # TODO: count logical CPUs from /sys/devices/system/cpu/online
-    return 0;
-}
-
-fn mihi_cpu_arch(): i64 {
-    # TODO: uname machine field; AGNOS-native path eventually reads
-    # the boot-info struct directly.
+    # TODO (slice B): parse /sys/devices/system/cpu/online range string
     return 0;
 }

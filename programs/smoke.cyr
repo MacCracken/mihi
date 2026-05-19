@@ -1,14 +1,30 @@
-# mihi smoke test — proves the library compiles end-to-end and the
-# stdlib include chain resolves. CI builds this to confirm no
-# regression in the dist bundle.
+# mihi smoke test — exercises every shipped probe end-to-end.
+# CI builds + runs this; exit 0 means uname(2) succeeded and the
+# field-accessors returned non-null pointers. The printed lines double
+# as a quick "is mihi sane on this box" diagnostic.
 #
 # Build: cyrius build programs/smoke.cyr build/mihi-smoke
-# Run:   ./build/mihi-smoke   (exit 0 on success)
+# Run:   ./build/mihi-smoke
 
 include "src/main.cyr"
 
 fn main() {
     alloc_init();
+
+    # Slice A — uname-backed probes. One syscall, three facts.
+    var uts[390];
+    var res = mihi_uname(&uts);
+    if (is_err_result(res) == 1) {
+        println("mihi smoke: uname(2) failed");
+        return 1;
+    }
+
+    # print(buf, len) is the byte-write primitive; pass explicit
+    # label lengths so we don't dereference garbage as a length.
+    print("kernel:  ", 9); println(mihi_kernel_name(&uts));
+    print("release: ", 9); println(mihi_kernel_version(&uts));
+    print("arch:    ", 9); println(mihi_cpu_arch(&uts));
+
     println("mihi smoke ok");
     return 0;
 }

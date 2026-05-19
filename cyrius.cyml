@@ -21,4 +21,8 @@ output = "build/mihi-smoke"
 modules = ["src/types.cyr", "src/cpu.cyr", "src/mem.cyr", "src/kernel.cyr", "src/host.cyr"]
 
 [deps]
-stdlib = ["string", "fmt", "alloc", "io", "vec", "str", "syscalls", "assert"]
+# agnosys wraps uname(2) / sysinfo(2) with Result-based error handling;
+# mihi's uname-backed probes (kernel_name / kernel_version / cpu_arch /
+# hostname) share one syscall through agnosys_uname rather than each
+# re-implementing SYS_UNAME. See docs/adr/0001-shared-uts-buffer.md.
+stdlib = ["string", "fmt", "alloc", "io", "vec", "str", "slice", "syscalls", "assert", "agnosys"]
