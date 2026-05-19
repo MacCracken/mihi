@@ -1,0 +1,21 @@
+# mihi/cpu — CPU probes.
+#
+# Linux source of truth: /proc/cpuinfo for model + flags, /sys for
+# topology. Scaffold stage: stubs returning 0/null; real readers land
+# under their planned names.
+
+fn mihi_cpu_model(): i64 {
+    # TODO: parse "model name" from /proc/cpuinfo
+    return 0;
+}
+
+fn mihi_cpu_count(): i64 {
+    # TODO: count logical CPUs from /sys/devices/system/cpu/online
+    return 0;
+}
+
+fn mihi_cpu_arch(): i64 {
+    # TODO: uname machine field; AGNOS-native path eventually reads
+    # the boot-info struct directly.
+    return 0;
+}

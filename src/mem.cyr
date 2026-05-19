@@ -1,0 +1,13 @@
+# mihi/mem — memory probes.
+#
+# Linux source of truth: /proc/meminfo. Scaffold stage: stubs.
+
+fn mihi_mem_total(): i64 {
+    # TODO: parse MemTotal from /proc/meminfo (kB → bytes)
+    return 0;
+}
+
+fn mihi_mem_free(): i64 {
+    # TODO: parse MemAvailable from /proc/meminfo
+    return 0;
+}

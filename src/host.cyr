@@ -1,0 +1,19 @@
+# mihi/host — host-identity probes.
+#
+# Sources: gethostname(2), /proc/uptime, /etc/os-release. Scaffold
+# stage: stubs.
+
+fn mihi_hostname(): i64 {
+    # TODO: gethostname(2) into a static buffer; return pointer
+    return 0;
+}
+
+fn mihi_uptime_secs(): i64 {
+    # TODO: parse first field of /proc/uptime, return whole seconds
+    return 0;
+}
+
+fn mihi_distro(): i64 {
+    # TODO: parse PRETTY_NAME from /etc/os-release; fall back to ID
+    return 0;
+}

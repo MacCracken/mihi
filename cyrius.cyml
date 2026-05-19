@@ -1,0 +1,24 @@
+[package]
+name = "mihi"
+version = "${file:VERSION}"
+description = "मिही / mihi — system-info probe library (CPU / RAM / GPU / kernel / uptime / distro / hostname). Substrate for iam, chakshu, and other tools that need 'tell me about this box'. Maori: the formal self-introduction ceremony."
+license = "GPL-3.0-only"
+language = "cyrius"
+cyrius = "6.0.0"
+
+[build]
+# In-tree smoke binary — exercises the lib API end-to-end. Consumers
+# bundle via `cyrius distlib` from the [lib].modules list below.
+entry = "programs/smoke.cyr"
+test = "src/test.cyr"
+output = "build/mihi-smoke"
+
+[lib]
+# Domain modules concatenated by `cyrius distlib` into dist/mihi.cyr —
+# the single-file bundle consumed via `include "lib/mihi.cyr"` after
+# `cyrius deps`. Order matters: types first, then probes in dependency
+# order. Scaffold lists the planned shape; bodies are stubs.
+modules = ["src/types.cyr", "src/cpu.cyr", "src/mem.cyr", "src/kernel.cyr", "src/host.cyr"]
+
+[deps]
+stdlib = ["string", "fmt", "alloc", "io", "vec", "str", "syscalls", "assert"]

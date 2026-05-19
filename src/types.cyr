@@ -1,0 +1,4 @@
+# mihi/types — shared types for the probe surface.
+#
+# Scaffold stage: empty. The MihiInfo struct + field constants land
+# here once the first real probe drives the shape.

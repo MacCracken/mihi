@@ -1,0 +1,14 @@
+# mihi/kernel — kernel identity probes.
+#
+# Linux source of truth: uname(2) syscall. On AGNOS-native: kernel
+# version baked into boot-info struct at handoff. Scaffold stage: stubs.
+
+fn mihi_kernel_name(): i64 {
+    # TODO: uname.sysname ("Linux" / "AGNOS")
+    return 0;
+}
+
+fn mihi_kernel_version(): i64 {
+    # TODO: uname.release on Linux; _AGNOS_VERSION constant on native
+    return 0;
+}

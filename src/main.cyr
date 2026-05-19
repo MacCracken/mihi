@@ -1,0 +1,18 @@
+# mihi — library entry. Re-exports the probe modules so consumers
+# (programs/smoke.cyr, tests/mihi.tcyr) can pull the whole API surface
+# via a single include. `cyrius distlib` reads [lib].modules from
+# cyrius.cyml directly and bundles types/cpu/mem/kernel/host into
+# dist/mihi.cyr — this file is not part of the dist bundle.
+#
+# Planned public surface (scaffold stubs only):
+#   types.cyr   — MihiInfo struct, field constants
+#   cpu.cyr     — mihi_cpu_model, mihi_cpu_count, mihi_cpu_arch
+#   mem.cyr     — mihi_mem_total, mihi_mem_free
+#   kernel.cyr  — mihi_kernel_name, mihi_kernel_version
+#   host.cyr    — mihi_hostname, mihi_uptime_secs, mihi_distro
+
+include "src/types.cyr"
+include "src/cpu.cyr"
+include "src/mem.cyr"
+include "src/kernel.cyr"
+include "src/host.cyr"
