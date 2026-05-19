@@ -25,6 +25,26 @@ fn main() {
     print("release: ", 9); println(mihi_kernel_version(&uts));
     print("arch:    ", 9); println(mihi_cpu_arch(&uts));
 
+    # Slice B — /proc and /sys parsers.
+    var cpuinfo[8192];
+    var model = mihi_cpu_model(&cpuinfo, 8192);
+    if (model == 0) {
+        println("mihi smoke: /proc/cpuinfo model name not found");
+        return 1;
+    }
+    print("model:   ", 9); println(model);
+
+    # Annotate ncpu as i64 so println dispatches to println_int rather
+    # than treating the integer as a cstring pointer (segfaults).
+    var ncpu: i64 = mihi_cpu_count();
+    if (ncpu < 0) {
+        println("mihi smoke: /sys cpu/online read failed");
+        return 1;
+    }
+    # Call println_int directly — overload dispatch via type annotation
+    # isn't routing through var bindings reliably in cyrius 6.0.0.
+    print("cpus:    ", 9); println_int(ncpu);
+
     println("mihi smoke ok");
     return 0;
 }

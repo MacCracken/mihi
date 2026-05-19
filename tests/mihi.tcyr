@@ -78,6 +78,100 @@ fn main() {
     assert_eq(load8(mihi_kernel_version(&suts)), 66, "release offset stable");
     assert_eq(load8(mihi_cpu_arch(&suts)),       67, "machine offset stable");
 
+    # ----- cpu.cyr — mihi_parse_cpu_range ---------------------------
+    # Pure-function parser; no syscall. Build small synthetic buffers
+    # for each shape /sys/devices/system/cpu/online actually emits.
+
+    test_group("cpu.cyr — mihi_parse_cpu_range shapes");
+
+    # "0-15" → 16
+    var r1[8];
+    store8(&r1 + 0, 48); store8(&r1 + 1, 45);
+    store8(&r1 + 2, 49); store8(&r1 + 3, 53);
+    assert_eq(mihi_parse_cpu_range(&r1, 4), 16, "range '0-15' = 16 CPUs");
+
+    # "0" → 1
+    var r2[4];
+    store8(&r2 + 0, 48);
+    assert_eq(mihi_parse_cpu_range(&r2, 1), 1, "range '0' = 1 CPU");
+
+    # "0-15\n" — trailing newline shouldn't break us
+    var r3[8];
+    store8(&r3 + 0, 48); store8(&r3 + 1, 45);
+    store8(&r3 + 2, 49); store8(&r3 + 3, 53);
+    store8(&r3 + 4, 10);
+    assert_eq(mihi_parse_cpu_range(&r3, 5), 16, "trailing \\n tolerated");
+
+    # "0-3,5-7" → 4 + 3 = 7 (disjoint range)
+    var r4[16];
+    store8(&r4 + 0, 48); store8(&r4 + 1, 45); store8(&r4 + 2, 51);
+    store8(&r4 + 3, 44);
+    store8(&r4 + 4, 53); store8(&r4 + 5, 45); store8(&r4 + 6, 55);
+    assert_eq(mihi_parse_cpu_range(&r4, 7), 7, "disjoint ranges sum");
+
+    # Empty buffer → 0
+    var r5[4];
+    assert_eq(mihi_parse_cpu_range(&r5, 0), 0, "empty buffer = 0");
+
+    # ----- cpu.cyr — mihi_cpu_count happy path ----------------------
+    # Real /sys read; should be >= 1 on any Linux box.
+    test_group("cpu.cyr — mihi_cpu_count happy path");
+    var live_ncpu: i64 = mihi_cpu_count();
+    assert(live_ncpu >= 1, "at least one logical CPU online");
+
+    # ----- cpu.cyr — mihi_parse_cpu_model ---------------------------
+    # Synthetic cpuinfo. Layout matches real /proc/cpuinfo: first line
+    # is "processor\t: 0\n", second is "model name\t: <brand>\n". The
+    # parser searches for "\nmodel name" so the leading 'processor'
+    # line is required for the match.
+
+    test_group("cpu.cyr — mihi_parse_cpu_model happy path");
+    var ci1 = "processor\t: 0\nmodel name\t: TestCPU\nfoo\n";
+    var ci1_buf[128];
+    var ci1_len: i64 = strlen(ci1);
+    var ci1_i = 0;
+    while (ci1_i < ci1_len) {
+        store8(&ci1_buf + ci1_i, load8(ci1 + ci1_i));
+        ci1_i = ci1_i + 1;
+    }
+    var model1 = mihi_parse_cpu_model(&ci1_buf, ci1_len);
+    assert(model1 != 0, "model found in well-formed cpuinfo");
+    assert_eq(streq(model1, "TestCPU"), 1, "model value == 'TestCPU'");
+
+    # No "model name" line → returns null.
+    test_group("cpu.cyr — mihi_parse_cpu_model missing field");
+    var ci2 = "processor\t: 0\nstepping\t: 1\n";
+    var ci2_buf[64];
+    var ci2_len: i64 = strlen(ci2);
+    var ci2_i = 0;
+    while (ci2_i < ci2_len) {
+        store8(&ci2_buf + ci2_i, load8(ci2 + ci2_i));
+        ci2_i = ci2_i + 1;
+    }
+    var model2 = mihi_parse_cpu_model(&ci2_buf, ci2_len);
+    assert_eq(model2, 0, "missing 'model name' → null");
+
+    # "model name" at file-start (no leading '\n') should NOT match —
+    # documents the "preceded-by-newline" line-anchor contract.
+    test_group("cpu.cyr — mihi_parse_cpu_model line-anchor");
+    var ci3 = "model name\t: SneakyImposter\n";
+    var ci3_buf[64];
+    var ci3_len: i64 = strlen(ci3);
+    var ci3_i = 0;
+    while (ci3_i < ci3_len) {
+        store8(&ci3_buf + ci3_i, load8(ci3 + ci3_i));
+        ci3_i = ci3_i + 1;
+    }
+    var model3 = mihi_parse_cpu_model(&ci3_buf, ci3_len);
+    assert_eq(model3, 0, "file-start 'model name' rejected (line-anchored)");
+
+    # ----- cpu.cyr — mihi_cpu_model happy path ----------------------
+    test_group("cpu.cyr — mihi_cpu_model real /proc/cpuinfo");
+    var live_buf[8192];
+    var live_model = mihi_cpu_model(&live_buf, 8192);
+    assert(live_model != 0, "live /proc/cpuinfo yields a model");
+    assert(strlen(live_model) > 0, "live model string is non-empty");
+
     return assert_summary();
 }
 

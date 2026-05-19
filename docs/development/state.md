@@ -22,34 +22,38 @@ bundle order; `cyrius distlib` concatenates them into
 
 ## Source
 
-Slice A landed (3 uname-backed probes). Slices B/C of M1 and all of
-M2/M3 still stubs.
+Slices A + B landed (5 probes: 3 uname-backed + cpu_count + cpu_model).
+Slice C and M2/M3 still stubs.
 
 - `src/types.cyr` — shared types (empty; `MihiInfo` deferred per ADR 0001)
-- `src/cpu.cyr` — `mihi_cpu_arch` ✅; `mihi_cpu_model` / `mihi_cpu_count` stubs (slice B)
+- `src/cpu.cyr` — `mihi_cpu_arch` ✅ + `mihi_cpu_count` ✅ + `mihi_cpu_model` ✅ (+ `mihi_parse_cpu_range` / `mihi_parse_cpu_model` pure-function helpers)
 - `src/mem.cyr` — `mihi_mem_total` / `mihi_mem_free` stubs (slice C)
 - `src/kernel.cyr` — `mihi_uname` wrapper + `mihi_kernel_name` ✅ + `mihi_kernel_version` ✅
 - `src/host.cyr` — `mihi_hostname` / `mihi_uptime_secs` / `mihi_distro` stubs (M2)
 - `src/main.cyr` — convenience re-export (consumed by smoke + tests; not in distlib bundle)
-- `programs/smoke.cyr` — smoke binary; prints `kernel / release / arch`
+- `programs/smoke.cyr` — smoke binary; prints `kernel / release / arch / model / cpus`
 
 ## Tests
 
-- `tests/mihi.tcyr` — primary suite: 13 assertions across 6 test
-  groups covering slice A (real-uname happy path + zero-init buffer +
-  synthetic-buffer offset round-trip)
+- `tests/mihi.tcyr` — primary suite: 25 assertions across 12 test
+  groups. Slice A: real-uname happy path + zero-init buffer +
+  synthetic-uts offset round-trip. Slice B: range-parser unit tests
+  (`"0-15"` / `"0"` / `"0-3,5-7"` / empty), real `/sys` read,
+  cpuinfo-parser synthetic tests (happy + missing-field + line-anchor
+  rejection of file-start match), real `/proc/cpuinfo` read.
 - `tests/mihi.bcyr` — benchmark stub
 - `tests/mihi.fcyr` — fuzz stub
 
-M1 slices B+C and M2 add `/proc` parser coverage.
+Slice C and M2 add `/proc/meminfo`, `/proc/uptime`, `/etc/os-release`
+parser coverage.
 
 ## Build
 
 ```sh
 cyrius deps
 cyrius build programs/smoke.cyr build/mihi-smoke
-./build/mihi-smoke      # prints kernel / release / arch + "mihi smoke ok", exit 0
-cyrius test             # 13/13 pass
+./build/mihi-smoke      # prints kernel / release / arch / model / cpus + "mihi smoke ok", exit 0
+cyrius test             # 25/25 pass
 ```
 
 ## Dependencies
@@ -72,9 +76,8 @@ _None yet._ Planned at v1.0:
 
 ## Next
 
-See [`roadmap.md`](roadmap.md) for the M1 → v1.0 plan. Slice A of M1
-(kernel + cpu_arch via uname) is in `Unreleased`. Slice B
-(`mihi_cpu_model` from `/proc/cpuinfo`, `mihi_cpu_count` from
-`/sys/devices/system/cpu/online`) is next; then slice C
-(`mihi_mem_total` / `mihi_mem_free` from `/proc/meminfo`). v0.2.0
-cuts when all three slices ship.
+See [`roadmap.md`](roadmap.md) for the M1 → v1.0 plan. Slices A + B
+of M1 (kernel + cpu_arch via uname; cpu_count + cpu_model via /sys
+and /proc/cpuinfo) are in `Unreleased`. Slice C
+(`mihi_mem_total` / `mihi_mem_free` from `/proc/meminfo`) closes
+M1. v0.2.0 cuts when slice C ships.

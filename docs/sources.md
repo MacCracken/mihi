@@ -22,12 +22,21 @@ buffer convention.
 | `mihi_kernel_version`  | `uname(2)` → `utsname.release`      | man 2 uname; kernel `include/generated/utsrelease.h`                               | The `uname -r` string; baked at kernel build time. 65-byte buffer at offset 130. |
 | `mihi_cpu_arch`        | `uname(2)` → `utsname.machine`      | man 2 uname                                                                        | Arch identifier (`x86_64`, `aarch64`, …). 65-byte buffer at offset 260. |
 
-## Pending (filled as M1/M2 land)
+## Slice B — /proc + /sys parsers (M1, v0.2.0)
+
+Each probe opens, reads, and closes its source per call — no caching,
+no module-private state. `mihi_cpu_model` mutates the caller-supplied
+read buffer (writes one NUL byte to terminate the value).
+
+| Probe             | Source                                      | Authority                                                                                                                                 | Notes |
+| ----------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ----- |
+| `mihi_cpu_count`  | `/sys/devices/system/cpu/online`            | `Documentation/admin-guide/cputopology.rst`; kernel `kernel/cpu.c::cpu_online_mask` printed via `%*pbl` format                            | Parses comma-separated ranges (`"0-15"`, `"0-3,5-7"`, `"0"`). Bare `N` treated as `N-N`. 64-byte stack scratch is plenty (max range string is short). |
+| `mihi_cpu_model`  | `/proc/cpuinfo` first `model name` value    | man 5 proc; kernel `fs/proc/cpuinfo.c` → arch `show_cpuinfo()` (e.g. `arch/x86/kernel/cpu/proc.c`)                                        | Line-anchored search for `"\nmodel name"` pins us to CPU 0's block — first-block-only honours "one source per fact" on big.LITTLE. Caller supplies 8 kB scratch. |
+
+## Pending (filled as M2/M3 land)
 
 | Probe              | Planned source                                | Slice |
 | ------------------ | --------------------------------------------- | ----- |
-| `mihi_cpu_model`   | `/proc/cpuinfo` "model name" (first block)    | B     |
-| `mihi_cpu_count`   | `/sys/devices/system/cpu/online`              | B     |
 | `mihi_mem_total`   | `/proc/meminfo` `MemTotal:` (kB → bytes)      | C     |
 | `mihi_mem_free`    | `/proc/meminfo` `MemAvailable:`               | C     |
 | `mihi_hostname`    | `uname(2)` → `utsname.nodename`               | M2    |

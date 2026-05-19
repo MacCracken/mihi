@@ -1,14 +1,14 @@
 # mihi/cpu — CPU probes.
 #
-# Slice A (this file, M1): mihi_cpu_arch via uname.machine — shares
-# the caller-supplied uts buffer with kernel.cyr per ADR 0001.
+# Slice A: mihi_cpu_arch via uname.machine (shares uts buffer with
+# kernel.cyr per ADR 0001).
 #
-# Slice B (next, M1): mihi_cpu_model + mihi_cpu_count via /proc and
-# /sys — these are still stubs returning 0. /proc/cpuinfo gives the
-# "model name" line (first occurrence; on heterogeneous big.LITTLE
-# parts we still pin to the first CPU per "one source per fact").
-# /sys/devices/system/cpu/online gives logical CPU count from a
-# range string like "0-15" — cheaper than counting cpuinfo blocks.
+# Slice B: mihi_cpu_count via /sys/devices/system/cpu/online,
+# mihi_cpu_model via /proc/cpuinfo first block. Both follow the
+# read-into-caller-buffer convention; cpu_count's return is an
+# integer so it uses a stack-local scratch buffer.
+
+# ----- Slice A — uname.machine -------------------------------------
 
 # Return a pointer to the null-terminated machine field within `uts`.
 # Caller must have already filled `uts` via mihi_uname.
@@ -20,12 +20,125 @@ fn mihi_cpu_arch(uts): cstring {
     return uts + UTS_MACHINE;
 }
 
-fn mihi_cpu_model(): i64 {
-    # TODO (slice B): parse "model name" from /proc/cpuinfo first block
-    return 0;
+# ----- Slice B — /sys/devices/system/cpu/online --------------------
+
+# Parse a CPU range string like "0-15" or "0-3,5-7" or "0" into a
+# logical-CPU count. Sums (hi-lo+1) per comma-separated range; bare
+# "N" is treated as N-N. Whitespace, newlines, and commas are
+# separators. Returns 0 if no digits found.
+# Source: Documentation/admin-guide/cputopology.rst, %*pbl format.
+# Pure-function — testable with synthetic buffers, no syscall.
+fn mihi_parse_cpu_range(buf, len): i64 {
+    var total = 0;
+    var i = 0;
+    var done = 0;
+    while (done == 0) {
+        # skip separators (' ', '\n', ',')
+        while (i < len && (load8(buf + i) == 32 || load8(buf + i) == 10 || load8(buf + i) == 44)) {
+            i = i + 1;
+        }
+        if (i >= len) {
+            done = 1;
+            continue;
+        }
+        var c0 = load8(buf + i);
+        if (c0 < 48 || c0 > 57) {
+            # non-digit, non-separator — malformed; stop counting.
+            done = 1;
+            continue;
+        }
+        # parse lo
+        var lo = 0;
+        while (i < len && load8(buf + i) >= 48 && load8(buf + i) <= 57) {
+            lo = lo * 10 + (load8(buf + i) - 48);
+            i = i + 1;
+        }
+        # optional -hi
+        var hi = lo;
+        if (i < len && load8(buf + i) == 45) {
+            i = i + 1;
+            hi = 0;
+            while (i < len && load8(buf + i) >= 48 && load8(buf + i) <= 57) {
+                hi = hi * 10 + (load8(buf + i) - 48);
+                i = i + 1;
+            }
+        }
+        total = total + (hi - lo + 1);
+    }
+    return total;
 }
 
+# Count logical CPUs from /sys/devices/system/cpu/online.
+# Returns logical CPU count, or 0 - 1 on open/read error.
+# Source: kernel/cpu.c::cpu_online_mask exported via sysfs.
 fn mihi_cpu_count(): i64 {
-    # TODO (slice B): parse /sys/devices/system/cpu/online range string
-    return 0;
+    var buf[64];
+    var fd = sys_open("/sys/devices/system/cpu/online", O_RDONLY, 0);
+    if (fd < 0) { return 0 - 1; }
+    var n = sys_read(fd, &buf, 64);
+    sys_close(fd);
+    if (n <= 0) { return 0 - 1; }
+    return mihi_parse_cpu_range(&buf, n);
+}
+
+# ----- Slice B — /proc/cpuinfo model name ---------------------------
+
+# Scan `buf` (length `len`, freshly read from /proc/cpuinfo) for the
+# first "model name" line, null-terminate the value in place by
+# overwriting its trailing newline, and return a cstring pointer to
+# the value's first character. Returns 0 (null) if not found.
+#
+# /proc/cpuinfo on Linux always begins with "processor\t: 0\n", so
+# "model name" is preceded by '\n' — we search for "\nmodel name"
+# rather than worrying about file-start. This naturally pins us to
+# CPU 0's block, satisfying "one source per fact" on heterogeneous
+# big.LITTLE parts.
+#
+# Mutates `buf` (writes a single NUL byte). Pure parser otherwise —
+# unit-testable against a synthetic cpuinfo buffer.
+fn mihi_parse_cpu_model(buf, len): cstring {
+    var target = "\nmodel name";
+    var tlen = 11;
+    var i = 0;
+    var found = 0 - 1;
+    while (i + tlen <= len && found == 0 - 1) {
+        # "matched" not "match" — match is a reserved keyword in cyrius.
+        var matched = 1;
+        var j = 0;
+        while (j < tlen && matched == 1) {
+            if (load8(buf + i + j) != load8(target + j)) { matched = 0; }
+            j = j + 1;
+        }
+        if (matched == 1) { found = i + 1; }  # +1 skips the leading '\n'
+        i = i + 1;
+    }
+    if (found == 0 - 1) { return 0; }
+    # Skip past "model name" (10 bytes), then any \t/space/':' before the value.
+    var p = found + 10;
+    while (p < len && (load8(buf + p) == 9 || load8(buf + p) == 32 || load8(buf + p) == 58)) {
+        p = p + 1;
+    }
+    if (p >= len) { return 0; }
+    var start = p;
+    while (p < len && load8(buf + p) != 10) { p = p + 1; }
+    if (p >= len) { return 0; }
+    store8(buf + p, 0);
+    return buf + start;
+}
+
+# Read /proc/cpuinfo into the caller-supplied `buf` (capacity `cap`,
+# recommend 8192 — first-block "model name" line lands well within).
+# Returns cstring ptr into `buf` to the null-terminated model string,
+# or 0 (null) on open/read/parse failure.
+# Source: fs/proc/cpuinfo.c → arch-specific show_cpuinfo() (e.g.
+# arch/x86/kernel/cpu/proc.c). The "model name" field is the human
+# brand string from CPUID brand-string leaves (x86) or device-tree
+# /cpus/cpu@N/compatible (aarch64).
+fn mihi_cpu_model(buf, cap): cstring {
+    var fd = sys_open("/proc/cpuinfo", O_RDONLY, 0);
+    if (fd < 0) { return 0; }
+    var n = sys_read(fd, buf, cap);
+    sys_close(fd);
+    if (n <= 0) { return 0; }
+    return mihi_parse_cpu_model(buf, n);
 }
