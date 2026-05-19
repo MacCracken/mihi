@@ -45,6 +45,22 @@ fn main() {
     # isn't routing through var bindings reliably in cyrius 6.0.0.
     print("cpus:    ", 9); println_int(ncpu);
 
+    # Slice C — /proc/meminfo. 4 kB scratch (meminfo is ~1.5 kB).
+    # Print MiB rather than bytes so the smoke output is readable.
+    var meminfo[4096];
+    var total_b: i64 = mihi_mem_total(&meminfo, 4096);
+    var free_b: i64 = mihi_mem_free(&meminfo, 4096);
+    if (total_b < 0) {
+        println("mihi smoke: /proc/meminfo MemTotal read failed");
+        return 1;
+    }
+    if (free_b < 0) {
+        println("mihi smoke: /proc/meminfo MemAvailable read failed");
+        return 1;
+    }
+    print("mem MiB: ", 9); println_int(total_b / 1048576);
+    print("free MiB:", 9); println_int(free_b / 1048576);
+
     println("mihi smoke ok");
     return 0;
 }

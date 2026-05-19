@@ -172,6 +172,69 @@ fn main() {
     assert(live_model != 0, "live /proc/cpuinfo yields a model");
     assert(strlen(live_model) > 0, "live model string is non-empty");
 
+    # ----- mem.cyr — mihi_find_meminfo_field line-anchor -----------
+    # Real meminfo has MemTotal at file-start (no leading '\n');
+    # MemAvailable is mid-buffer (preceded by '\n'). Verify the
+    # anchor accepts both shapes and rejects mid-line "MemTotal:".
+
+    test_group("mem.cyr — find_meminfo_field anchors");
+    var mi1 = "MemTotal:       100 kB\nMemFree:         50 kB\nMemAvailable:    80 kB\n";
+    var mi1_buf[128];
+    var mi1_len: i64 = strlen(mi1);
+    var mi1_i = 0;
+    while (mi1_i < mi1_len) {
+        store8(&mi1_buf + mi1_i, load8(mi1 + mi1_i));
+        mi1_i = mi1_i + 1;
+    }
+
+    var pos_total: i64 = mihi_find_meminfo_field(&mi1_buf, mi1_len, "MemTotal:", 9);
+    var pos_avail: i64 = mihi_find_meminfo_field(&mi1_buf, mi1_len, "MemAvailable:", 13);
+    var pos_free: i64 = mihi_find_meminfo_field(&mi1_buf, mi1_len, "MemFree:", 8);
+    assert_eq(pos_total, 9,  "MemTotal at file-start matched (past colon)");
+    assert(pos_avail > pos_free, "MemAvailable found after MemFree");
+    assert(pos_free > pos_total,  "MemFree found after MemTotal");
+
+    # Mid-line match must be rejected — e.g. "XMemTotal:" should
+    # not match if the leading 'X' is not '\n'.
+    var mi2 = "XMemTotal: 1 kB\n";
+    var mi2_buf[32];
+    var mi2_len: i64 = strlen(mi2);
+    var mi2_i = 0;
+    while (mi2_i < mi2_len) {
+        store8(&mi2_buf + mi2_i, load8(mi2 + mi2_i));
+        mi2_i = mi2_i + 1;
+    }
+    var pos_bad: i64 = mihi_find_meminfo_field(&mi2_buf, mi2_len, "MemTotal:", 9);
+    assert_eq(pos_bad, 0 - 1, "mid-line 'MemTotal:' rejected");
+
+    # ----- mem.cyr — mihi_parse_meminfo_kb digit parsing -----------
+    test_group("mem.cyr — parse_meminfo_kb");
+    # Same mi1_buf as above. Past MemTotal: colon at offset 9.
+    var kb_total: i64 = mihi_parse_meminfo_kb(&mi1_buf, mi1_len, pos_total);
+    assert_eq(kb_total, 100, "MemTotal parsed as 100 kB");
+    var kb_avail: i64 = mihi_parse_meminfo_kb(&mi1_buf, mi1_len, pos_avail);
+    assert_eq(kb_avail, 80,  "MemAvailable parsed as 80 kB");
+
+    # ----- mem.cyr — mihi_extract_meminfo_bytes end-to-end ---------
+    test_group("mem.cyr — extract_meminfo_bytes kB→bytes");
+    var bytes_total: i64 = mihi_extract_meminfo_bytes(&mi1_buf, mi1_len, "MemTotal:", 9);
+    assert_eq(bytes_total, 102400, "100 kB → 102400 bytes");
+    var bytes_missing: i64 = mihi_extract_meminfo_bytes(&mi1_buf, mi1_len, "Swap:", 5);
+    assert_eq(bytes_missing, 0 - 1, "missing field → -1");
+
+    # ----- mem.cyr — mihi_mem_total / mihi_mem_free happy paths ----
+    test_group("mem.cyr — mihi_mem_total real /proc/meminfo");
+    var mem_buf[4096];
+    var live_total: i64 = mihi_mem_total(&mem_buf, 4096);
+    assert(live_total > 0, "live MemTotal > 0 bytes");
+    # Sanity floor: any modern Linux box has at least 128 MiB.
+    assert(live_total >= 134217728, "live MemTotal >= 128 MiB");
+
+    test_group("mem.cyr — mihi_mem_free real /proc/meminfo");
+    var live_free: i64 = mihi_mem_free(&mem_buf, 4096);
+    assert(live_free > 0, "live MemAvailable > 0 bytes");
+    assert(live_free <= live_total, "MemAvailable <= MemTotal");
+
     return assert_summary();
 }
 

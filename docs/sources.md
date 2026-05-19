@@ -33,12 +33,24 @@ read buffer (writes one NUL byte to terminate the value).
 | `mihi_cpu_count`  | `/sys/devices/system/cpu/online`            | `Documentation/admin-guide/cputopology.rst`; kernel `kernel/cpu.c::cpu_online_mask` printed via `%*pbl` format                            | Parses comma-separated ranges (`"0-15"`, `"0-3,5-7"`, `"0"`). Bare `N` treated as `N-N`. 64-byte stack scratch is plenty (max range string is short). |
 | `mihi_cpu_model`  | `/proc/cpuinfo` first `model name` value    | man 5 proc; kernel `fs/proc/cpuinfo.c` → arch `show_cpuinfo()` (e.g. `arch/x86/kernel/cpu/proc.c`)                                        | Line-anchored search for `"\nmodel name"` pins us to CPU 0's block — first-block-only honours "one source per fact" on big.LITTLE. Caller supplies 8 kB scratch. |
 
+## Slice C — /proc/meminfo (M1, v0.2.0)
+
+Both probes share the field-finder + kB-parser helpers
+(`mihi_find_meminfo_field`, `mihi_parse_meminfo_kb`,
+`mihi_extract_meminfo_bytes`); each is exposed for unit testing.
+Field anchor accepts file-start (MemTotal is the first line) and
+`'\n'`-prefixed mid-buffer matches. Values returned as bytes
+(kB × 1024).
+
+| Probe             | Source                                | Authority                                                                                  | Notes |
+| ----------------- | ------------------------------------- | ------------------------------------------------------------------------------------------ | ----- |
+| `mihi_mem_total`  | `/proc/meminfo` `MemTotal:`           | man 5 proc; kernel `fs/proc/meminfo.c::meminfo_proc_show()`                                 | Always present on Linux; file-start anchored. Caller supplies 4 kB scratch (meminfo ≈ 1.5 kB). |
+| `mihi_mem_free`   | `/proc/meminfo` `MemAvailable:`       | kernel commit 34e431b0ae39 (3.14+); `fs/proc/meminfo.c`                                     | Picked over `MemFree:` because MemAvailable counts reclaimable cache/slab — the kernel's own "actually usable" estimate that monitoring tools surface as "free". |
+
 ## Pending (filled as M2/M3 land)
 
 | Probe              | Planned source                                | Slice |
 | ------------------ | --------------------------------------------- | ----- |
-| `mihi_mem_total`   | `/proc/meminfo` `MemTotal:` (kB → bytes)      | C     |
-| `mihi_mem_free`    | `/proc/meminfo` `MemAvailable:`               | C     |
 | `mihi_hostname`    | `uname(2)` → `utsname.nodename`               | M2    |
 | `mihi_uptime_secs` | `/proc/uptime` first field                    | M2    |
 | `mihi_distro`      | `/etc/os-release` `PRETTY_NAME`, fallback `ID` | M2    |

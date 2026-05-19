@@ -1,13 +1,97 @@
 # mihi/mem — memory probes.
 #
-# Linux source of truth: /proc/meminfo. Scaffold stage: stubs.
+# Linux source of truth: /proc/meminfo. Kernel writes one line per
+# fact, format: `Name:\t<padding>VALUE kB\n`. We read up to 4096 bytes
+# (meminfo is usually ~1.5 kB) into a caller-supplied scratch buffer,
+# line-anchor-search the field name, skip whitespace, parse the
+# decimal kB count, multiply by 1024 → bytes.
+#
+# Why /proc/meminfo rather than sysinfo(2): sysinfo's `freeram` is the
+# dumb "memory not currently allocated" number that misses reclaimable
+# page cache. /proc/meminfo's `MemAvailable:` (kernel/3.14+) is the
+# kernel's own estimate of what's actually allocatable without
+# swapping — what every monitoring tool reports as "free." See
+# kernel commit 34e431b0ae39.
 
-fn mihi_mem_total(): i64 {
-    # TODO: parse MemTotal from /proc/meminfo (kB → bytes)
-    return 0;
+# Find a line-anchored field in `buf`. `field` is the bare field
+# name with trailing colon (e.g. "MemTotal:"). The match position
+# must either be at offset 0 (file-start) or be preceded by '\n'.
+# Returns the offset just past the field's colon (where the value
+# whitespace begins), or 0 - 1 if not found.
+# Pure function — exposed for unit tests against synthetic buffers.
+fn mihi_find_meminfo_field(buf, len, field, field_len): i64 {
+    var i = 0;
+    var found = 0 - 1;
+    while (i + field_len <= len && found == 0 - 1) {
+        var anchored = 0;
+        if (i == 0) { anchored = 1; }
+        if (i > 0 && load8(buf + i - 1) == 10) { anchored = 1; }
+        if (anchored == 1) {
+            var matched = 1;
+            var j = 0;
+            while (j < field_len && matched == 1) {
+                if (load8(buf + i + j) != load8(field + j)) { matched = 0; }
+                j = j + 1;
+            }
+            if (matched == 1) { found = i + field_len; }
+        }
+        i = i + 1;
+    }
+    return found;
 }
 
-fn mihi_mem_free(): i64 {
-    # TODO: parse MemAvailable from /proc/meminfo
-    return 0;
+# Parse a meminfo value: skip whitespace (tab/space), accumulate
+# decimal digits, return the kB integer or 0 - 1 if no digit appears.
+# Caller has already located the start position past the field colon.
+fn mihi_parse_meminfo_kb(buf, len, start): i64 {
+    var p = start;
+    while (p < len && (load8(buf + p) == 9 || load8(buf + p) == 32)) {
+        p = p + 1;
+    }
+    if (p >= len) { return 0 - 1; }
+    var v = 0;
+    var has = 0;
+    while (p < len && load8(buf + p) >= 48 && load8(buf + p) <= 57) {
+        v = v * 10 + (load8(buf + p) - 48);
+        has = 1;
+        p = p + 1;
+    }
+    if (has == 0) { return 0 - 1; }
+    return v;
+}
+
+# Convenience: find field, parse kB, return bytes (kB * 1024) or 0 - 1.
+fn mihi_extract_meminfo_bytes(buf, len, field, field_len): i64 {
+    var start = mihi_find_meminfo_field(buf, len, field, field_len);
+    if (start < 0) { return 0 - 1; }
+    var kb = mihi_parse_meminfo_kb(buf, len, start);
+    if (kb < 0) { return 0 - 1; }
+    return kb * 1024;
+}
+
+# Read /proc/meminfo into the caller-supplied `buf` (capacity `cap`,
+# recommend 4096 — meminfo is typically ~1.5 kB), parse MemTotal,
+# return total RAM in bytes. Returns 0 - 1 on open/read/parse failure.
+# Source: man 5 proc; kernel fs/proc/meminfo.c::meminfo_proc_show().
+fn mihi_mem_total(buf, cap): i64 {
+    var fd = sys_open("/proc/meminfo", O_RDONLY, 0);
+    if (fd < 0) { return 0 - 1; }
+    var n = sys_read(fd, buf, cap);
+    sys_close(fd);
+    if (n <= 0) { return 0 - 1; }
+    return mihi_extract_meminfo_bytes(buf, n, "MemTotal:", 9);
+}
+
+# Read /proc/meminfo, parse MemAvailable, return available RAM in
+# bytes. MemAvailable is the kernel's estimate of allocatable memory
+# (accounts for reclaimable cache + slab); preferred over MemFree
+# for "how much can I actually use" queries.
+# Source: kernel commit 34e431b0ae39, fs/proc/meminfo.c.
+fn mihi_mem_free(buf, cap): i64 {
+    var fd = sys_open("/proc/meminfo", O_RDONLY, 0);
+    if (fd < 0) { return 0 - 1; }
+    var n = sys_read(fd, buf, cap);
+    sys_close(fd);
+    if (n <= 0) { return 0 - 1; }
+    return mihi_extract_meminfo_bytes(buf, n, "MemAvailable:", 13);
 }
