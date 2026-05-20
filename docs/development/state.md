@@ -5,6 +5,14 @@
 
 ## Version
 
+**0.7.0** — released 2026-05-19. Distlib hardening / CI gate cut.
+Adds the determinism gate next to the existing drift check (SHA-256
+compare across two `cyrius distlib` invocations), bench-files-build
+gate, expanded required-files list (ADR 0002, audit doc, bench
+infrastructure all CI-enforced). No source changes. Leaves 0.8.x
+patch slots reserved for transitive fixes from `iam` / `chakshu`
+consumer integration.
+
 **0.6.0** — released 2026-05-19. Security audit cut. Three defensive
 parser fixes (C-1 cpu_range descending, M-1 meminfo_kb overflow cap,
 C-2 same for cpu_range + uptime), four new regression tests, two

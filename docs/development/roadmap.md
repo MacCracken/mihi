@@ -122,20 +122,35 @@ baselines, security audit. Spans two cuts (v0.5.0 + v0.6.0).
   consumer awareness: CVE-2025-40289, CVE-2025-40288). No critical
   findings; probe API unchanged.
 
-### M4.5 — distlib hardening (v0.7.0)
+### M4.5 — distlib hardening (v0.7.0) ✅ shipped 2026-05-19
 
 CI-enforced determinism for the consumer-facing bundle. Mirrors the
 ai-hwaccel + libro + yukti pattern: build the bundle, sha256 it,
 re-build, compare. Any drift fails the build.
 
-- ☐ `cyrius distlib` runs in CI; `dist/mihi.cyr` SHA pinned per
-  commit.
-- ☐ Determinism rebuild gate — the second invocation in the same
-  CI step must produce a byte-identical bundle.
-- ☐ Drift gate — if a contributor forgets to regenerate `dist/`
-  after touching `src/`, the diff fails the build.
-- **Acceptance**: CI workflow has a `distlib drift + determinism`
-  step that sits between `Lint` and `Build (DCE)`.
+- ✅ `cyrius distlib` runs in CI on every push + PR (the existing
+  drift check has been in `.github/workflows/ci.yml` since v0.2.0;
+  the 0.7.0 cut adds the determinism gate next to it).
+- ✅ **Determinism rebuild gate** — second `cyrius distlib`
+  invocation in the same CI step must produce a byte-identical
+  bundle (SHA-256 compare).
+- ✅ **Drift gate** — if a contributor forgets to regenerate
+  `dist/` after touching `src/`, `diff -q` against the checked-in
+  bundle fails the build.
+- ✅ **Bench file build gate** — every `benches/*.bcyr` is compiled
+  to catch a helper removal that breaks bench compilation. Doesn't
+  run the benches.
+- ✅ **Required-files list expanded** — ADR 0002, audit doc,
+  benchmark infrastructure all now enforced by the docs job.
+- **Acceptance ✅**: CI workflow has `distlib drift check` +
+  `distlib determinism check` + `Bench files build` steps sitting
+  between `Test` and `DCE parity check`.
+
+### M4.6 — Transitive consumer fixes (v0.8.x, reserved)
+
+Patch slots reserved for fixes that surface when `iam` (M5) or
+`chakshu` (M6) start integrating against mihi. No planned content
+— this is the discovery cycle slot.
 
 ### M5 — First consumer integration (v0.9.0)
 

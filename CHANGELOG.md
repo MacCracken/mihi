@@ -4,6 +4,53 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-05-19
+
+**Distlib determinism + CI gate hardening.** Closes M4.5 from the
+reordered roadmap. The drift check has been in CI since v0.2.0;
+this cut adds the determinism gate next to it so non-reproducible
+bundle output fails the build, mirrors the ai-hwaccel / libro /
+yukti convention, and expands the required-files list to enforce
+every v1.0 hardening artifact landed in 0.5.0–0.6.0. No source
+changes; CI-only.
+
+Leaves the 0.8.x patch slots free for transitive fixes that surface
+when `iam` (M5) or `chakshu` (M6) start consuming mihi.
+
+### Added (CI)
+- **distlib determinism gate** in `.github/workflows/ci.yml` — runs
+  `cyrius distlib` twice and SHA-256-compares the two outputs. Any
+  byte drift (timestamps, ordering, formatting noise) fails the build.
+  Sits next to the existing drift check; drift = stale, determinism
+  = non-reproducible.
+- **Bench files build gate** — every `benches/*.bcyr` is compiled in
+  CI to catch contributors removing a helper that a bench file
+  references. Doesn't run the benches (hot-path numbers come from
+  local `scripts/bench-history.sh` runs that write to
+  `docs/benchmarks/history.csv`).
+- **Required-files list expanded** in the docs job:
+  - `docs/adr/0002-gpu-singleton-cache.md`
+  - `docs/benchmarks.md`
+  - `benches/{probe_paths,parsers,gpu_paths}.bcyr`
+  - `scripts/bench-history.sh`
+  - `docs/audit/*-audit.md` (glob — at least one audit doc must
+    exist; date rotates per cut)
+
+### Changed
+- **`VERSION`**: 0.6.0 → 0.7.0.
+- **`docs/development/roadmap.md`** — M4.5 checkbox flipped ✅;
+  intermediate-version notes updated (0.8.x reserved for
+  transitive consumer-side patches).
+- **`docs/development/state.md`** — refreshed for 0.7.0; CI gate
+  status documented.
+
+### Open (post-0.7.0)
+- **0.8.x** (reserved) — transitive fixes that surface when `iam` /
+  `chakshu` begin consuming mihi. No planned content; placeholder
+  for the consumer-integration discovery cycle.
+- **v0.9.0** (M5) — `iam` first consumer integration.
+- **v1.0.0** (M6) — `chakshu` second consumer + API freeze.
+
 ## [0.6.0] — 2026-05-19
 
 **Security audit + defensive parser fixes.** Per-CLAUDE.md P(-1)

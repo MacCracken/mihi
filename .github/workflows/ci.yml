@@ -95,6 +95,43 @@ jobs:
           diff -q /tmp/dist-checked-in.cyr dist/mihi.cyr \
             || { echo "FAIL: dist/mihi.cyr is stale. Run 'cyrius distlib' and commit."; exit 1; }
 
+      - name: distlib determinism check
+        # Byte-deterministic bundles are the reproducible-build
+        # contract for library consumers. Run `cyrius distlib` again
+        # and SHA-256-compare against the first regen — any drift
+        # (timestamps, ordering, formatting noise) fails the build.
+        # Mirrors the ai-hwaccel 2.2.4 + libro determinism gates.
+        # Sits next to the drift check because both reason about
+        # `cyrius distlib` output; drift = stale, determinism =
+        # non-reproducible.
+        run: |
+          sha_first=$(sha256sum dist/mihi.cyr | cut -d' ' -f1)
+          cyrius distlib > /dev/null
+          sha_second=$(sha256sum dist/mihi.cyr | cut -d' ' -f1)
+          if [ "$sha_first" != "$sha_second" ]; then
+            echo "FAIL: cyrius distlib is non-deterministic."
+            echo "  first SHA:  $sha_first"
+            echo "  second SHA: $sha_second"
+            exit 1
+          fi
+          echo "OK: dist/mihi.cyr deterministic (SHA $sha_first)"
+
+      - name: Bench files build
+        # Verifies every benches/*.bcyr still compiles against current
+        # src/ — catches a contributor removing a helper that a bench
+        # file references. Doesn't run the benches (CI overhead;
+        # hot-path numbers come from local `scripts/bench-history.sh`
+        # runs that write to docs/benchmarks/history.csv).
+        run: |
+          mkdir -p build
+          for f in benches/*.bcyr; do
+            name=$(basename "$f" .bcyr)
+            echo "--- Building $name ---"
+            cyrius build "$f" "build/bench_${name}" >/dev/null \
+              || { echo "FAIL: $f no longer compiles"; exit 1; }
+          done
+          echo "OK: all bench files compile"
+
       - name: DCE parity check
         # Release builds may set CYRIUS_DCE=1 to drop unreachable
         # stdlib functions (mihi pulls in agnosys which has ~1000
@@ -197,8 +234,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Check required files
-        # Floor for v0.2.0; tightens as v1.0 approaches.
-        # docs/audit/ lands at P(-1) hardening (pre-v1.0 only).
+        # Floor tightens as v1.0 approaches. P(-1) hardening artifacts
+        # (audit doc, ADR 0002, bench infrastructure) landed in 0.5.0
+        # + 0.6.0; CI now enforces their presence.
         run: |
           MISSING=0
           for f in README.md CHANGELOG.md VERSION LICENSE \
@@ -206,11 +244,25 @@ jobs:
                    cyrius.cyml CLAUDE.md \
                    docs/development/roadmap.md docs/development/state.md \
                    docs/adr/0001-shared-uts-buffer.md \
-                   docs/sources.md \
+                   docs/adr/0002-gpu-singleton-cache.md \
+                   docs/sources.md docs/benchmarks.md \
+                   benches/probe_paths.bcyr benches/parsers.bcyr \
+                   benches/gpu_paths.bcyr \
+                   scripts/bench-history.sh \
                    dist/mihi.cyr; do
             if [ -f "$f" ]; then echo "  OK: $f"
             else echo "  MISSING: $f"; MISSING=1; fi
           done
+          # At least one audit doc must exist (dated; we don't pin a
+          # specific date so a future audit can rotate the artifact).
+          # The audit doc is required from v0.6.0 onward per the
+          # security-audit feedback memory.
+          if ls docs/audit/*-audit.md >/dev/null 2>&1; then
+            echo "  OK: docs/audit/*-audit.md (at least one present)"
+          else
+            echo "  MISSING: docs/audit/*-audit.md (no audit doc found)"
+            MISSING=1
+          fi
           exit $MISSING
 
       - name: Verify version consistency
