@@ -14,11 +14,15 @@ in the roadmap and refreshes `state.md` to reflect iam as mihi's first
 consumer. v1.0 remains gated on M6 (chakshu, blocked on its own
 Cyrius language update).
 
-No source changes. `dist/mihi.cyr` unchanged — the 0.7.0 determinism
-gate would catch any drift.
+No source changes. `dist/mihi.cyr` regenerated for the v0.8.0
+version stamp in its header comment (single-line diff: the bundle
+header includes `# Version: <VERSION>`, so any VERSION bump
+triggers the distlib drift check).
 
 ### Changed
 - **`VERSION`**: 0.7.0 → 0.8.0.
+- **`dist/mihi.cyr`**: regenerated via `cyrius distlib` for the
+  header version stamp. One-line diff; no module content changed.
 - **`docs/development/roadmap.md`** — M5 flipped ✅, sequenced at
   v0.8.0 (instead of the previously planned v0.9.0; iam integrated
   against the current `dist/mihi.cyr` bundle rather than waiting for
