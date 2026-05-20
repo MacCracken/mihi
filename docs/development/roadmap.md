@@ -146,32 +146,46 @@ re-build, compare. Any drift fails the build.
   `distlib determinism check` + `Bench files build` steps sitting
   between `Test` and `DCE parity check`.
 
-### M4.6 — Transitive consumer fixes (v0.8.x, reserved)
+### M4.6 — Transitive consumer fixes (v0.8.x, reserved) ✅ closed empty 2026-05-19
 
-Patch slots reserved for fixes that surface when `iam` (M5) or
-`chakshu` (M6) start integrating against mihi. No planned content
-— this is the discovery cycle slot.
+Patch slots reserved for fixes that would surface when `iam` (M5) or
+`chakshu` (M6) integrated against mihi. **Closed empty at v0.8.0** —
+iam's integration against mihi 0.7.0 surfaced zero transitive fixes,
+so no patch content was needed. The v0.8.0 cut repurposed the slot as
+the M5-acknowledgment release instead. If chakshu's eventual M6
+integration surfaces transitive fixes, they land in a v0.9.x slot
+before v1.0 freezes the API.
 
-### M5 — First consumer integration (v0.9.0)
+### M5 — First consumer integration (v0.8.0) ✅ shipped 2026-05-19
 
-> **Reordered 2026-05-19**: was v0.5.0; now blocked behind M4
-> (hardening) + M4.5 (distlib) so mihi's surface is benchmarked,
-> audited, and bundle-deterministic before `iam` pins it.
+> **Sequencing note**: roadmap originally planned this at v0.9.0;
+> reality shipped it at v0.8.0. iam integrated against the existing
+> mihi 0.7.0 `dist/mihi.cyr` bundle rather than waiting for a
+> renamed cut, so the M5 acknowledgment landed in the slot
+> originally reserved as M4.6.
 
-`iam` consumes mihi end-to-end. The library is shape-stable post-M4
+> **Earlier reorder (2026-05-19)**: M5 was reordered from v0.5.0 to
+> sit behind M4 (hardening) + M4.5 (distlib) so mihi's surface was
+> benchmarked, audited, and bundle-deterministic before `iam`
+> pinned it.
+
+`iam` consumes mihi end-to-end. The library was shape-stable post-M4
 audit (no findings required signature changes); breaking changes from
 this point onward warrant an ADR. iam's mihi integration drives the
 v1.0 "first consumer green" checkbox.
 
-- `iam` repo's `[deps.mihi]` block pinned to mihi v0.9.0.
-- Both repos build green in CI.
-- `iam` produces a real output line for every mihi probe (kernel,
-  release, arch, host, model, cpus, mem total/free, uptime, distro,
-  plus the gpu slice).
-- **Dep gate**: iam catches up next boot cycle (still scaffold-only
-  as of 2026-05-19) — `iam` will be mihi's first consumer.
-- **Acceptance**: `iam` on archaemenid prints a complete system-info
-  report sourced entirely from mihi.
+- ✅ `iam` repo's `[deps.mihi]` block pinned at
+  `tag = "0.7.0"` (`iam/cyrius.cyml`). iam-side intent is to repin
+  to `tag = "1.0.0"` in lockstep when mihi cuts v1.0.
+- ✅ Both repos build green in CI.
+- ✅ `iam` produces a real output line for every mihi probe
+  (kernel, release, arch, host, model, cpus, mem total/free,
+  uptime, distro, plus the gpu slice).
+- ✅ iam-0.9.0 RC released 2026-05-19, F-001 (TTY-escape
+  sanitization at the renderer boundary) closed iam-side per
+  the *mihi returns raw bytes, consumers handle formatting* rule.
+- **Acceptance ✅**: `iam` on archaemenid prints a complete
+  system-info report sourced entirely from mihi.
 
 ### M6 — Second consumer (chakshu) green (v1.0.0)
 

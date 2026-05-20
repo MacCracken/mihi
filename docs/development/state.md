@@ -5,6 +5,14 @@
 
 ## Version
 
+**0.8.0** — released 2026-05-19. M5 acknowledgment cut. `iam`
+integrated against mihi 0.7.0 (sitting as iam-0.9.0 RC), no
+transitive fixes surfaced — the v0.8.x slot the 0.7.0 cut reserved
+for them closes empty. No source changes; `dist/mihi.cyr` unchanged.
+Roadmap M5 flipped ✅ at v0.8.0 (instead of the planned v0.9.0 —
+iam pinned the current bundle rather than waiting for a renamed
+cut). v1.0 remains gated on M6 (chakshu).
+
 **0.7.0** — released 2026-05-19. Distlib hardening / CI gate cut.
 Adds the determinism gate next to the existing drift check (SHA-256
 compare across two `cyrius distlib` invocations), bench-files-build
@@ -51,7 +59,8 @@ bundle order; `cyrius distlib` concatenates them into
 ## Source
 
 M3 complete — 15 probes across kernel / cpu / mem / host / gpu.
-M4 (`iam` consumer integration) is next.
+M4 (hardening) + M4.5 (distlib CI gate) + M5 (iam consumer) all
+shipped. M6 (chakshu) is the only milestone remaining before v1.0.
 
 - `src/types.cyr` — shared types (empty; `MihiInfo` deferred per ADR 0001)
 - `src/cpu.cyr` — `mihi_cpu_arch` ✅ + `mihi_cpu_count` ✅ + `mihi_cpu_model` ✅ (+ `mihi_parse_cpu_range` / `mihi_parse_cpu_model` pure-function helpers)
@@ -106,16 +115,30 @@ Direct (declared in `cyrius.cyml`):
 
 ## Consumers
 
-_None yet._ Planned at v1.0:
+- [`iam`](https://github.com/MacCracken/iam) ✅ — **first consumer
+  integrated** as of iam-0.9.0 (2026-05-19), pinned at
+  `[deps.mihi] tag = "0.7.0"`. iam consumes the full mihi probe
+  surface (kernel / cpu / mem / host / gpu) end-to-end; the M6 RC
+  release notes confirm *"mihi 1.0 ship is the only external gate"*
+  on iam's side. iam will repin to mihi v1.0 in lockstep when the
+  freeze cuts.
 
-- [`iam`](https://github.com/MacCracken/iam) — first consumer (M4)
-- [`chakshu`](https://github.com/MacCracken/chakshu) — second consumer (M6)
-- [`hapi`](https://github.com/MacCracken/hapi) — target-box info on link/sync
-- [`BannerManor`](https://github.com/MacCracken/bannermanor) — hostname for banner auto-detect
+Planned but not yet integrated:
+
+- [`chakshu`](https://github.com/MacCracken/chakshu) — second consumer
+  (M6 / v1.0). Blocked on chakshu's own Cyrius language update.
+- [`hapi`](https://github.com/MacCracken/hapi) — target-box info on
+  link/sync (post-v1.0).
+- [`BannerManor`](https://github.com/MacCracken/bannermanor) —
+  hostname for banner auto-detect (post-v1.0).
 
 ## Next
 
-See [`roadmap.md`](roadmap.md) for the v1.0 plan. **M3 shipped as
-v0.4.0.** Next is M4 (v0.5.0): `iam` consumes mihi end-to-end. The
-library has to be **shape-stable** through M4 — signature changes
-are still breaking pre-v1.0 but should be ADR'd before landing.
+See [`roadmap.md`](roadmap.md) for the v1.0 plan. **M5 shipped as
+v0.8.0** (iam integrated against mihi 0.7.0; v0.8.0 was the
+acknowledgment cut). Only **M6 (chakshu)** remains before v1.0, and
+it's blocked externally on chakshu's Cyrius language update. The
+mihi side is feature-complete and shape-stable; no internal work is
+planned between now and the v1.0 cut. If a transitive fix surfaces
+from chakshu's eventual integration, it lands in a v0.9.x slot
+before v1.0 freezes the API.

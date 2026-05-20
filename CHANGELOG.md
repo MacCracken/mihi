@@ -4,6 +4,38 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-05-19
+
+**M5 acknowledgment cut.** `iam` integrated against mihi 0.7.0 and is
+sitting as iam-0.9.0 RC pending mihi v1.0 — no transitive fixes
+surfaced from the integration, so the v0.8.x slot the 0.7.0 cut
+reserved for them closes empty. This release recognizes M5 as shipped
+in the roadmap and refreshes `state.md` to reflect iam as mihi's first
+consumer. v1.0 remains gated on M6 (chakshu, blocked on its own
+Cyrius language update).
+
+No source changes. `dist/mihi.cyr` unchanged — the 0.7.0 determinism
+gate would catch any drift.
+
+### Changed
+- **`VERSION`**: 0.7.0 → 0.8.0.
+- **`docs/development/roadmap.md`** — M5 flipped ✅, sequenced at
+  v0.8.0 (instead of the previously planned v0.9.0; iam integrated
+  against the current `dist/mihi.cyr` bundle rather than waiting for
+  a renamed cut). M4.6 noted as closed empty. M6 still v1.0.0,
+  blocked on chakshu.
+- **`docs/development/state.md`** — `## Consumers` updated: iam is
+  the first consumer, pinned at `[deps.mihi] tag = "0.7.0"`,
+  sitting as iam-0.9.0 RC per its CHANGELOG. `## Next` section
+  refreshed (was two releases stale, still pointed at M4).
+
+### Open (post-0.8.0)
+- **v1.0.0 (M6)** — `chakshu` second consumer + API freeze. Blocked
+  on chakshu's Cyrius language update; no internal ETA. iam-side
+  has declared *"mihi 1.0 ship is the only external gate"* (iam
+  0.9.0 CHANGELOG); the v1.0 cut becomes a lockstep release when
+  chakshu unblocks.
+
 ## [0.7.0] — 2026-05-19
 
 **Distlib determinism + CI gate hardening.** Closes M4.5 from the
