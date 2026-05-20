@@ -474,6 +474,211 @@ fn main() {
     var n_live: i64 = mihi_gpu_count();
     assert(n_live >= 0, "live gpu count is non-negative");
 
+    # ====================================================================
+    # v1.0 hardening — error-path coverage for shipped probes (75 → 100+).
+    # No new public surface; just the error paths the happy-path tests
+    # didn't reach. Each block targets one parser's untested branches.
+    # ====================================================================
+
+    # ----- cpu.cyr — mihi_parse_cpu_range edge cases ----------------
+    test_group("cpu.cyr — mihi_parse_cpu_range edges");
+
+    var r6[8];
+    store8(&r6 + 0, 49); store8(&r6 + 1, 48);
+    store8(&r6 + 2, 50); store8(&r6 + 3, 51);
+    assert_eq(mihi_parse_cpu_range(&r6, 4), 1, "'1023' = 1 CPU (bare N)");
+
+    var r7[16];
+    store8(&r7 + 0, 49); store8(&r7 + 1, 48); store8(&r7 + 2, 48);
+    store8(&r7 + 3, 45);
+    store8(&r7 + 4, 49); store8(&r7 + 5, 57); store8(&r7 + 6, 57);
+    assert_eq(mihi_parse_cpu_range(&r7, 7), 100, "'100-199' = 100 CPUs");
+
+    var r8[4];
+    store8(&r8 + 0, 97); store8(&r8 + 1, 98); store8(&r8 + 2, 99);
+    assert_eq(mihi_parse_cpu_range(&r8, 3), 0, "alphabetic input -> 0");
+
+    var r9[8];
+    store8(&r9 + 0, 32); store8(&r9 + 1, 32);
+    store8(&r9 + 2, 10); store8(&r9 + 3, 32);
+    assert_eq(mihi_parse_cpu_range(&r9, 4), 0, "whitespace-only -> 0");
+
+    # ----- cpu.cyr — mihi_parse_cpu_model degenerate buffers --------
+    test_group("cpu.cyr — mihi_parse_cpu_model degenerate");
+
+    var ci_empty[4];
+    assert_eq(mihi_parse_cpu_model(&ci_empty, 0), 0,
+              "empty cpuinfo buffer -> null");
+
+    # Value runs to EOF without trailing '\n' (parser returns 0 per
+    # cpu.cyr:124).
+    var ci_eof = "processor\t: 0\nmodel name\t: noeof";
+    var ci_eof_buf[64];
+    var ci_eof_len: i64 = strlen(ci_eof);
+    var ci_eof_i = 0;
+    while (ci_eof_i < ci_eof_len) {
+        store8(&ci_eof_buf + ci_eof_i, load8(ci_eof + ci_eof_i));
+        ci_eof_i = ci_eof_i + 1;
+    }
+    assert_eq(mihi_parse_cpu_model(&ci_eof_buf, ci_eof_len), 0,
+              "value runs to EOF without newline -> null");
+
+    # ----- mem.cyr — mihi_find_meminfo_field degenerate buffers -----
+    test_group("mem.cyr — find_meminfo_field degenerate");
+
+    var mi_empty[4];
+    assert_eq(mihi_find_meminfo_field(&mi_empty, 0, "MemTotal:", 9),
+              0 - 1, "empty buffer -> -1");
+
+    var mi_short = "Mem";
+    var mi_short_buf[4];
+    store8(&mi_short_buf + 0, load8(mi_short + 0));
+    store8(&mi_short_buf + 1, load8(mi_short + 1));
+    store8(&mi_short_buf + 2, load8(mi_short + 2));
+    assert_eq(mihi_find_meminfo_field(&mi_short_buf, 3, "MemTotal:", 9),
+              0 - 1, "key longer than buffer -> -1");
+
+    # ----- mem.cyr — mihi_parse_meminfo_kb degenerate ---------------
+    test_group("mem.cyr — parse_meminfo_kb degenerate");
+
+    var mi3[8];
+    assert_eq(mihi_parse_meminfo_kb(&mi3, 0, 5), 0 - 1,
+              "start past end -> -1");
+
+    var mi_ws_buf[8];
+    store8(&mi_ws_buf + 0, 32); store8(&mi_ws_buf + 1, 32);
+    store8(&mi_ws_buf + 2, 32);
+    assert_eq(mihi_parse_meminfo_kb(&mi_ws_buf, 3, 0), 0 - 1,
+              "whitespace-then-EOF -> -1");
+
+    var mi_big = "MemTotal:\t67108864 kB\n";
+    var mi_big_buf[32];
+    var mi_big_len: i64 = strlen(mi_big);
+    var mi_big_i = 0;
+    while (mi_big_i < mi_big_len) {
+        store8(&mi_big_buf + mi_big_i, load8(mi_big + mi_big_i));
+        mi_big_i = mi_big_i + 1;
+    }
+    var mi_big_pos: i64 = mihi_find_meminfo_field(&mi_big_buf, mi_big_len, "MemTotal:", 9);
+    assert_eq(mihi_parse_meminfo_kb(&mi_big_buf, mi_big_len, mi_big_pos),
+              67108864, "64 GiB value parses without overflow");
+
+    # ----- host.cyr — mihi_parse_uptime_secs extra shapes -----------
+    test_group("host.cyr — parse_uptime_secs extras");
+
+    var u5 = "31536000.00 100.00\n";
+    var u5_buf[32];
+    var u5_len: i64 = strlen(u5);
+    var u5_i = 0;
+    while (u5_i < u5_len) {
+        store8(&u5_buf + u5_i, load8(u5 + u5_i));
+        u5_i = u5_i + 1;
+    }
+    assert_eq(mihi_parse_uptime_secs(&u5_buf, u5_len), 31536000,
+              "1-year uptime parses (year in seconds)");
+
+    var u6[4];
+    store8(&u6 + 0, 32); store8(&u6 + 1, 32);
+    assert_eq(mihi_parse_uptime_secs(&u6, 2), 0 - 1,
+              "whitespace-only -> -1");
+
+    var u7[4];
+    store8(&u7 + 0, 53); store8(&u7 + 1, 53);
+    assert_eq(mihi_parse_uptime_secs(&u7, 2), 55,
+              "bare '55' (no separator) -> 55");
+
+    # ----- host.cyr — find_osrelease_key degenerate -----------------
+    test_group("host.cyr — find_osrelease_key degenerate");
+
+    var or_empty[4];
+    assert_eq(mihi_find_osrelease_key(&or_empty, 0, "PRETTY_NAME=", 12),
+              0 - 1, "empty buffer -> -1");
+
+    var or_short = "ID";
+    var or_short_buf[4];
+    store8(&or_short_buf + 0, load8(or_short + 0));
+    store8(&or_short_buf + 1, load8(or_short + 1));
+    assert_eq(mihi_find_osrelease_key(&or_short_buf, 2, "PRETTY_NAME=", 12),
+              0 - 1, "key longer than buffer -> -1");
+
+    # ----- host.cyr — parse_osrelease_value degenerate --------------
+    test_group("host.cyr — parse_osrelease_value degenerate");
+
+    var or_uq = "PRETTY_NAME=\"abc";
+    var or_uq_buf[24];
+    var or_uq_len: i64 = strlen(or_uq);
+    var or_uq_i = 0;
+    while (or_uq_i < or_uq_len) {
+        store8(&or_uq_buf + or_uq_i, load8(or_uq + or_uq_i));
+        or_uq_i = or_uq_i + 1;
+    }
+    var or_uq_pos: i64 = mihi_find_osrelease_key(&or_uq_buf, or_uq_len, "PRETTY_NAME=", 12);
+    var or_uq_val = mihi_parse_osrelease_value(&or_uq_buf, or_uq_len, or_uq_pos);
+    assert_eq(or_uq_val, 0, "unterminated quote -> null");
+
+    var or_be = "ID=arch";
+    var or_be_buf[16];
+    var or_be_len: i64 = strlen(or_be);
+    var or_be_i = 0;
+    while (or_be_i < or_be_len) {
+        store8(&or_be_buf + or_be_i, load8(or_be + or_be_i));
+        or_be_i = or_be_i + 1;
+    }
+    var or_be_pos: i64 = mihi_find_osrelease_key(&or_be_buf, or_be_len, "ID=", 3);
+    var or_be_val = mihi_parse_osrelease_value(&or_be_buf, or_be_len, or_be_pos);
+    assert_eq(or_be_val, 0, "bare value to EOF (no newline) -> null");
+
+    # ----- gpu.cyr — multi-accelerator synthetic registry -----------
+    test_group("gpu.cyr — multi-accelerator registry");
+
+    _mihi_gpu_registry = registry_new();
+    reg_add_profile(_mihi_gpu_registry, profile_cpu(16 * 1073741824));
+    var ga = profile_new(ACCEL_ROCM, 0, 4 * 1073741824);
+    profile_set_device_name(ga, "GPU A");
+    reg_add_profile(_mihi_gpu_registry, ga);
+    var gb = profile_new(ACCEL_ROCM, 1, 8 * 1073741824);
+    profile_set_device_name(gb, "GPU B");
+    reg_add_profile(_mihi_gpu_registry, gb);
+
+    assert_eq(mihi_gpu_count(), 2, "count = 2 (CPU still excluded)");
+    assert_eq(streq(mihi_gpu_name(0), "GPU A"), 1, "idx 0 -> GPU A");
+    assert_eq(streq(mihi_gpu_name(1), "GPU B"), 1, "idx 1 -> GPU B");
+    assert_eq(mihi_gpu_memory_bytes(0), 4 * 1073741824, "idx 0 mem = 4 GiB");
+    assert_eq(mihi_gpu_memory_bytes(1), 8 * 1073741824, "idx 1 mem = 8 GiB");
+
+    # ----- gpu.cyr — mixed family types -----------------------------
+    test_group("gpu.cyr — mixed family types");
+
+    _mihi_gpu_registry = registry_new();
+    reg_add_profile(_mihi_gpu_registry, profile_cpu(8 * 1073741824));
+    var gx_rocm = profile_new(ACCEL_ROCM, 0, 4 * 1073741824);
+    profile_set_device_name(gx_rocm, "rocm");
+    reg_add_profile(_mihi_gpu_registry, gx_rocm);
+    var gx_tpu = profile_new(ACCEL_TPU, 0, 16 * 1073741824);
+    profile_set_device_name(gx_tpu, "tpu");
+    reg_add_profile(_mihi_gpu_registry, gx_tpu);
+    var gx_npu = profile_new(ACCEL_AMD_XDNA, 0, 2 * 1073741824);
+    profile_set_device_name(gx_npu, "npu");
+    reg_add_profile(_mihi_gpu_registry, gx_npu);
+
+    assert_eq(mihi_gpu_count(), 3, "count = 3 (3 accelerators)");
+    assert_eq(mihi_gpu_family(0), FAMILY_GPU, "idx 0 family = GPU (ROCm)");
+    assert_eq(mihi_gpu_family(1), FAMILY_TPU, "idx 1 family = TPU");
+    assert_eq(mihi_gpu_family(2), FAMILY_NPU, "idx 2 family = NPU (XDNA)");
+
+    # ----- gpu.cyr — singleton cache stability ----------------------
+    # Verifies the load-bearing claim of ADR 0002: first call inits,
+    # second call reuses the same registry pointer.
+    test_group("gpu.cyr — singleton cache stability");
+
+    _mihi_gpu_registry = 0;
+    mihi_gpu_count();
+    var first_ptr = _mihi_gpu_registry;
+    assert(first_ptr != 0, "cache populated after first call");
+    mihi_gpu_count();
+    assert_eq(_mihi_gpu_registry, first_ptr,
+              "second call reuses the same registry pointer");
+
     return assert_summary();
 }
 

@@ -1,0 +1,163 @@
+# mihi benchmarks — public probe surface with real I/O.
+#
+# These are the calls a login-MOTD consumer (`iam`, `BannerManor`)
+# makes once per shell. Each probe is timed including its underlying
+# syscall(s) and parser pass. Reported numbers are the cold cost — no
+# repeat-read benefits unless the caller explicitly caches.
+#
+# Build:  cyrius bench benches/probe_paths.bcyr
+# Run:    /tmp/bench_probe_paths (or use ./scripts/bench-history.sh)
+
+include "src/main.cyr"
+
+alloc_init();
+
+println("=== mihi probe paths (real I/O) ===");
+
+# ----- uname-backed family (one syscall, four facts) ------------------
+
+# Cost of the syscall + buffer fill. Per ADR 0001 every uname-backed
+# probe shares one buffer, so this is the marginal cost of getting
+# kernel/version/arch/hostname facts. The accessors themselves are
+# pure pointer arithmetic and benched separately in parsers.bcyr.
+var uts[390];
+var b_uname = bench_new("probe/mihi_uname");
+var ri = 0;
+while (ri < 10000) {
+    bench_start(b_uname);
+    mihi_uname(&uts);
+    bench_stop(b_uname);
+    ri = ri + 1;
+}
+bench_report(b_uname);
+
+# ----- /sys/devices/system/cpu/online (mihi_cpu_count) ----------------
+
+# Open + read + close + parse. Hot path — every login MOTD calls this.
+var b_cpu = bench_new("probe/mihi_cpu_count");
+ri = 0;
+while (ri < 5000) {
+    bench_start(b_cpu);
+    mihi_cpu_count();
+    bench_stop(b_cpu);
+    ri = ri + 1;
+}
+bench_report(b_cpu);
+
+# ----- /proc/meminfo total + available --------------------------------
+
+# Two probes share the parse helpers but each does its own
+# open/read/close. Benched separately because a consumer that wants
+# both pays the file-read cost twice.
+var mbuf[4096];
+var b_mtot = bench_new("probe/mihi_mem_total");
+ri = 0;
+while (ri < 2000) {
+    bench_start(b_mtot);
+    mihi_mem_total(&mbuf, 4096);
+    bench_stop(b_mtot);
+    ri = ri + 1;
+}
+bench_report(b_mtot);
+
+var b_mfree = bench_new("probe/mihi_mem_free");
+ri = 0;
+while (ri < 2000) {
+    bench_start(b_mfree);
+    mihi_mem_free(&mbuf, 4096);
+    bench_stop(b_mfree);
+    ri = ri + 1;
+}
+bench_report(b_mfree);
+
+# ----- /proc/uptime ---------------------------------------------------
+
+var ubuf[64];
+var b_up = bench_new("probe/mihi_uptime_secs");
+ri = 0;
+while (ri < 5000) {
+    bench_start(b_up);
+    mihi_uptime_secs(&ubuf, 64);
+    bench_stop(b_up);
+    ri = ri + 1;
+}
+bench_report(b_up);
+
+# ----- /proc/cpuinfo (mihi_cpu_model — largest scratch) ---------------
+
+# 8 kB buffer; parses through the first-block "model name" line.
+# Heaviest /proc read of the probe family.
+var cibuf[8192];
+var b_cm = bench_new("probe/mihi_cpu_model");
+ri = 0;
+while (ri < 1000) {
+    bench_start(b_cm);
+    mihi_cpu_model(&cibuf, 8192);
+    bench_stop(b_cm);
+    ri = ri + 1;
+}
+bench_report(b_cm);
+
+# ----- /etc/os-release (mihi_distro — only fallback chain in mihi) ----
+
+var dbuf[1024];
+var b_d = bench_new("probe/mihi_distro");
+ri = 0;
+while (ri < 2000) {
+    bench_start(b_d);
+    mihi_distro(&dbuf, 1024);
+    bench_stop(b_d);
+    ri = ri + 1;
+}
+bench_report(b_d);
+
+# ----- uts field accessors (pure pointer arithmetic) ------------------
+
+# These don't issue a syscall — they just return a pointer into the
+# uts buffer the caller already filled. Tight loop, batched to
+# amortize the bench_start/bench_stop clock_gettime overhead (~240 ns
+# per pair) — see lib/bench.cyr header.
+mihi_uname(&uts);
+
+var b_kn = bench_new("accessor/mihi_kernel_name");
+bench_batch_start(b_kn);
+ri = 0;
+while (ri < 100000) {
+    mihi_kernel_name(&uts);
+    ri = ri + 1;
+}
+bench_batch_stop(b_kn, 100000);
+bench_report(b_kn);
+
+var b_kv = bench_new("accessor/mihi_kernel_version");
+bench_batch_start(b_kv);
+ri = 0;
+while (ri < 100000) {
+    mihi_kernel_version(&uts);
+    ri = ri + 1;
+}
+bench_batch_stop(b_kv, 100000);
+bench_report(b_kv);
+
+var b_arch = bench_new("accessor/mihi_cpu_arch");
+bench_batch_start(b_arch);
+ri = 0;
+while (ri < 100000) {
+    mihi_cpu_arch(&uts);
+    ri = ri + 1;
+}
+bench_batch_stop(b_arch, 100000);
+bench_report(b_arch);
+
+var b_host = bench_new("accessor/mihi_hostname");
+bench_batch_start(b_host);
+ri = 0;
+while (ri < 100000) {
+    mihi_hostname(&uts);
+    ri = ri + 1;
+}
+bench_batch_stop(b_host, 100000);
+bench_report(b_host);
+
+println("=== probe_paths done ===");
+syscall(60, 0);

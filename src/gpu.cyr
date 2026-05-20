@@ -21,17 +21,15 @@
 #   plus enrich_bandwidth/pcie/numa sysfs post-passes.
 #
 # Cache model — DEPARTS from cpu/mem/kernel/host pattern.
-# cpu/mem/kernel/host are stateless: caller passes a scratch buffer,
-# probe reads /proc, returns. The ai-hwaccel registry is a heap-
-# allocated graph of profiles (one per detected accelerator, with
-# device-name strings, memory bytes, family tags, etc.) — re-running
-# detection on every accessor call would re-walk all of /sys per
-# query. So gpu.cyr keeps a module-level singleton: first call to any
-# mihi_gpu_* probe lazy-initializes the registry; subsequent calls
-# are O(n) walks of the cached vec. Caller still doesn't allocate;
-# mihi owns the cache. On AGNOS-native this collapses to a single
-# read from the boot-info struct's accelerator manifest, same as the
-# planned kernel-fact path.
+# Module-level singleton: first call to any mihi_gpu_* probe lazy-
+# initializes the registry via registry_detect_no_exec(); subsequent
+# calls are O(n) walks of the cached vec. Caller still doesn't
+# allocate; mihi owns the cache. On AGNOS-native this collapses to a
+# single read from the boot-info struct's accelerator manifest.
+# Full justification (why the singleton doesn't violate "no caching
+# layer" or "no allocator dependency from probe internals"), the
+# alternatives considered, and the multi-threading caveat live in
+# docs/adr/0002-gpu-singleton-cache.md.
 #
 # Indexing convention: mihi_gpu_count() / mihi_gpu_{name,memory,
 # family,type}(idx) operate on the accelerator-only view — the CPU

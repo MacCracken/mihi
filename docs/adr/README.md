@@ -19,4 +19,5 @@ Decisions about mihi — what we chose, the context, and the consequences we acc
 
 ## Index
 
-_No ADRs yet. Add the first as `0001-kebab-case-title.md`._
+- [0001 — Shared uts buffer for uname-backed probes](0001-shared-uts-buffer.md) — caller-supplied 390-byte buffer; one `uname(2)` serves four facts.
+- [0002 — gpu.cyr module-level singleton cache](0002-gpu-singleton-cache.md) — lazy process-lifetime registry from `ai-hwaccel::registry_detect_no_exec()`; departs from ADR 0001's caller-buffer rule because the accelerator registry isn't a flat buffer.

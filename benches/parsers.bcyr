@@ -1,0 +1,159 @@
+# mihi benchmarks — pure parsers (no syscall, synthetic buffers).
+#
+# Each parser runs in a tight batched loop. Batching amortizes the
+# bench_start/stop overhead (~240 ns per pair on x86_64 Linux), which
+# matters because every parser here is sub-microsecond. Numbers
+# capture the parse-only cost — what you'd pay if the data were
+# already in memory (e.g. AGNOS-native boot-info path).
+
+include "src/main.cyr"
+
+alloc_init();
+
+println("=== mihi parsers (synthetic buffers) ===");
+
+# ----- mihi_parse_cpu_range — simple "0-15" --------------------------
+
+var r1[8];
+store8(&r1 + 0, 48); store8(&r1 + 1, 45);
+store8(&r1 + 2, 49); store8(&r1 + 3, 53);
+
+var b_r1 = bench_new("parser/cpu_range_simple");
+bench_batch_start(b_r1);
+var ri = 0;
+while (ri < 1000000) {
+    mihi_parse_cpu_range(&r1, 4);
+    ri = ri + 1;
+}
+bench_batch_stop(b_r1, 1000000);
+bench_report(b_r1);
+
+# ----- mihi_parse_cpu_range — disjoint "0-3,5-7" ---------------------
+
+var r2[16];
+store8(&r2 + 0, 48); store8(&r2 + 1, 45); store8(&r2 + 2, 51);
+store8(&r2 + 3, 44);
+store8(&r2 + 4, 53); store8(&r2 + 5, 45); store8(&r2 + 6, 55);
+
+var b_r2 = bench_new("parser/cpu_range_disjoint");
+bench_batch_start(b_r2);
+ri = 0;
+while (ri < 1000000) {
+    mihi_parse_cpu_range(&r2, 7);
+    ri = ri + 1;
+}
+bench_batch_stop(b_r2, 1000000);
+bench_report(b_r2);
+
+# ----- mihi_parse_cpu_model — synthetic cpuinfo block ----------------
+
+# The parser scans for "\nmodel name", skips whitespace + colon, then
+# walks to the trailing newline. Mutates the buffer (writes one NUL)
+# so each iteration restores the byte before the next call.
+var ci = "processor\t: 0\nmodel name\t: AMD Ryzen 7 5800H\n";
+var cibuf[64];
+var cilen: i64 = strlen(ci);
+var cii = 0;
+while (cii < cilen) {
+    store8(&cibuf + cii, load8(ci + cii));
+    cii = cii + 1;
+}
+# Remember the byte we'll overwrite (the trailing '\n').
+var orig_nl_byte = load8(&cibuf + cilen - 1);
+
+var b_cm = bench_new("parser/cpu_model");
+bench_batch_start(b_cm);
+ri = 0;
+while (ri < 100000) {
+    mihi_parse_cpu_model(&cibuf, cilen);
+    # Restore the NUL'd byte so the next iteration sees the same buffer.
+    store8(&cibuf + cilen - 1, orig_nl_byte);
+    ri = ri + 1;
+}
+bench_batch_stop(b_cm, 100000);
+bench_report(b_cm);
+
+# ----- mihi_extract_meminfo_bytes — find + parse end-to-end ----------
+
+var mi = "MemTotal:       62657920 kB\nMemFree:         8123456 kB\nMemAvailable:    58234112 kB\n";
+var mibuf[128];
+var milen: i64 = strlen(mi);
+var mii = 0;
+while (mii < milen) {
+    store8(&mibuf + mii, load8(mi + mii));
+    mii = mii + 1;
+}
+
+var b_mt = bench_new("parser/meminfo_MemTotal");
+bench_batch_start(b_mt);
+ri = 0;
+while (ri < 500000) {
+    mihi_extract_meminfo_bytes(&mibuf, milen, "MemTotal:", 9);
+    ri = ri + 1;
+}
+bench_batch_stop(b_mt, 500000);
+bench_report(b_mt);
+
+var b_ma = bench_new("parser/meminfo_MemAvailable");
+bench_batch_start(b_ma);
+ri = 0;
+while (ri < 500000) {
+    mihi_extract_meminfo_bytes(&mibuf, milen, "MemAvailable:", 13);
+    ri = ri + 1;
+}
+bench_batch_stop(b_ma, 500000);
+bench_report(b_ma);
+
+# ----- mihi_parse_uptime_secs ----------------------------------------
+
+var ut = "12345.67 13611.75\n";
+var utbuf[32];
+var utlen: i64 = strlen(ut);
+var uti = 0;
+while (uti < utlen) {
+    store8(&utbuf + uti, load8(ut + uti));
+    uti = uti + 1;
+}
+
+var b_up = bench_new("parser/uptime_secs");
+bench_batch_start(b_up);
+ri = 0;
+while (ri < 1000000) {
+    mihi_parse_uptime_secs(&utbuf, utlen);
+    ri = ri + 1;
+}
+bench_batch_stop(b_up, 1000000);
+bench_report(b_up);
+
+# ----- mihi_parse_osrelease_value — quoted value ---------------------
+
+# Same restore-byte trick as parse_cpu_model: the parser mutates the
+# buffer to null-terminate.
+var orv = "PRETTY_NAME=\"Arch Linux\"\nID=arch\n";
+var orvbuf[64];
+var orvlen: i64 = strlen(orv);
+var orvi = 0;
+while (orvi < orvlen) {
+    store8(&orvbuf + orvi, load8(orv + orvi));
+    orvi = orvi + 1;
+}
+# The closing '"' is at the end of "Arch Linux" — find_osrelease_key
+# returns 12 for PRETTY_NAME=, then parse_value writes NUL at offset
+# of the closing quote (offset 23 in the source: P=0..11, "=12,
+# A=13, …, x=22, "=23). Save the byte we'll clobber.
+var orv_key_pos: i64 = mihi_find_osrelease_key(&orvbuf, orvlen, "PRETTY_NAME=", 12);
+
+var b_orv = bench_new("parser/osrelease_value");
+bench_batch_start(b_orv);
+ri = 0;
+while (ri < 500000) {
+    mihi_parse_osrelease_value(&orvbuf, orvlen, orv_key_pos);
+    # Restore the byte (parser writes 0 at the closing quote).
+    store8(&orvbuf + 23, 34);  # 34 = '"'
+    ri = ri + 1;
+}
+bench_batch_stop(b_orv, 500000);
+bench_report(b_orv);
+
+println("=== parsers done ===");
+syscall(60, 0);

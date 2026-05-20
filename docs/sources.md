@@ -64,8 +64,27 @@ sources.
 | `mihi_uptime_secs` | `/proc/uptime` first whitespace-separated field     | man 5 proc; kernel `fs/proc/uptime.c::uptime_proc_show()`                                | Format `"%lu.%02lu %lu.%02lu\n"` — wall-clock uptime then summed idle. mihi drops the fractional part. 64-byte scratch (file is ~32 bytes). |
 | `mihi_distro`      | `/etc/os-release` `PRETTY_NAME` (fallback `ID`)     | man 5 os-release; freedesktop.org/software/systemd/man/os-release.html                   | Shell-style key=value; values may be double-quoted. Caller supplies 1 KiB scratch; probe null-terminates the value in place. Only probe with a fallback — same authority, recommended→required gradient. |
 
-## Pending (filled as M3 lands)
+## Slice E — accelerator-identity probes (M3, v0.4.0)
 
-| Probe              | Planned source                                | Slice |
-| ------------------ | --------------------------------------------- | ----- |
-| `mihi_gpu_*`       | via `ai-hwaccel` (single source)              | M3    |
+All five probes share a module-level singleton registry built by
+`ai-hwaccel`'s `registry_detect_no_exec()` on first call (see
+[ADR 0002](adr/0002-gpu-singleton-cache.md) for the cache-shape
+choice). Proximate source is ai-hwaccel; the deeper sysfs/syscall
+citations live in `ai-hwaccel/src/detect/*.cyr` (this file is the
+agnosticos-level index, not the kernel-doc index). `idx` keys the
+accelerator-only view — the synthetic CPU profile ai-hwaccel always
+emits is hidden from mihi's count.
+
+| Probe                    | Source                                                  | Authority                                                                                                                 | Notes |
+| ------------------------ | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | ----- |
+| `mihi_gpu_count`         | `ai-hwaccel::registry_detect_no_exec()` profile vec     | ai-hwaccel 2.2.6 `src/registry.cyr` (no-exec orchestrator) + per-backend sysfs paths                                       | Excludes the synthetic CPU profile. Lazy: first call across any `mihi_gpu_*` runs detection. |
+| `mihi_gpu_name(idx)`     | `ai-hwaccel::profile_device_name(p)`                    | ai-hwaccel 2.2.6 `src/detect/{rocm,tpu,gaudi,neuron,intel,amd_xdna,edge,cloud_asic}.cyr` (each backend's name setter)        | ROCm prefers `/sys/class/drm/cardN/device/product_name`, falls back to a synthesized `AMD Radeon (PCI vendor:device)` string. Other safe backends hardcode vendor strings. Returns 0 on out-of-range idx. |
+| `mihi_gpu_memory_bytes(idx)` | `ai-hwaccel::profile_memory_bytes(p)`               | ROCm: `/sys/class/drm/cardN/device/mem_info_vram_total`; NPU/TPU backends: vendor-documented fixed sizes                   | Bytes (not MiB). Returns 0 - 1 on bad idx. |
+| `mihi_gpu_family(idx)`   | `ai-hwaccel::profile_family(p)`                         | `ai-hwaccel::accel_family(profile_accel_type(p))` mapping — pure function over the 18-variant `AcceleratorType` enum         | `FAMILY_GPU` / `FAMILY_NPU` / `FAMILY_TPU` / `FAMILY_AI_ASIC`. Returns 0 - 1 on bad idx. |
+| `mihi_gpu_type(idx)`     | `ai-hwaccel::profile_accel_type(p)`                     | per-backend `profile_new(ACCEL_*, ...)` at detection time                                                                  | One of the eight `ACCEL_*` values reachable under the no-exec mask: ROCM, INTEL_NPU, AMD_XDNA, TPU, QUALCOMM, GROQ, SAMSUNG_NPU, MEDIATEK_APU. Returns 0 - 1 on bad idx. |
+
+The no-exec contract — that *none* of these probes spawn a
+subprocess, even transitively — is enforced by `ai-hwaccel`'s
+`builder_no_exec()` mask before any detector runs. See
+`ai-hwaccel::backend_uses_exec(b)` for the per-backend classifier
+(8 exec / 8 sysfs split as of ai-hwaccel 2.2.6).

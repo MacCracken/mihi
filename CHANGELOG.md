@@ -4,6 +4,93 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-05-19
+
+**Pre-consumer hardening — mihi's v1.0 shape, validated.** Roadmap
+M4↔M5 reordered: this milestone is now the hardening pass (test
+coverage, doc alignment, benchmarks) and the iam consumer integration
+moves to v0.9.0. The flip avoids consumer-side rework — `iam` is still
+scaffold-only, and pinning it against a mihi that's still settling
+would force a second pass later. Better to land iam against a
+benchmarked, audited, shape-stable mihi.
+
+No probe-surface changes; all 15 public probes (5 gpu probes added
+in 0.4.0) retain their 0.4.x signatures. This is the
+"library ready for consumers" cut.
+
+### Added
+- **Doc-alignment batch** — [`docs/sources.md`](docs/sources.md)
+  Slice E with one citation row per `mihi_gpu_*` probe;
+  [ADR 0002](docs/adr/0002-gpu-singleton-cache.md) justifying the
+  module-level singleton cache in `src/gpu.cyr` against ADR 0001's
+  caller-buffer rule; roadmap M3 follow-ups flipped to ✅; new
+  M3.1 entry for the 0.4.1 dep refresh.
+- **Test coverage push 75 → 104 assertions** across 10 new test
+  groups — closes the v1.0 "100+ assertions" criterion. Targets the
+  error paths the happy-path suite didn't reach: `mihi_parse_cpu_range`
+  (multi-digit / alphabetic / whitespace-only),
+  `mihi_parse_cpu_model` (empty buffer / EOF-no-newline),
+  `mihi_find_meminfo_field` (empty / key-longer-than-buffer),
+  `mihi_parse_meminfo_kb` (start-past-end / ws-only / 64-GiB-no-overflow),
+  `mihi_parse_uptime_secs` (year-long / ws-only / bare-no-separator),
+  `mihi_find_osrelease_key` (empty / key-longer),
+  `mihi_parse_osrelease_value` (unterminated quote / bare-no-newline),
+  `gpu.cyr` (multi-accelerator registry / mixed family types /
+  singleton cache stability).
+- **Benchmark suite** — three-tier convention matching yukti / ai-hwaccel:
+  - [`benches/probe_paths.bcyr`](benches/probe_paths.bcyr) — public
+    API with real I/O. archaemenid baseline: `probe/mihi_uname` 2 µs,
+    `probe/mihi_cpu_count` 8 µs, `probe/mihi_mem_total` 13 µs,
+    `probe/mihi_cpu_model` 52 µs (the heaviest probe),
+    `accessor/mihi_*` 4-5 ns (pure pointer arithmetic).
+  - [`benches/parsers.bcyr`](benches/parsers.bcyr) — pure parsers,
+    synthetic buffers. archaemenid baseline: `parser/cpu_range_simple`
+    48 ns, `parser/cpu_model` 311 ns, `parser/meminfo_MemAvailable`
+    691 ns (4× MemTotal because the field anchor walks past
+    MemTotal+MemFree).
+  - [`benches/gpu_paths.bcyr`](benches/gpu_paths.bcyr) — proves
+    [ADR 0002](docs/adr/0002-gpu-singleton-cache.md) empirically.
+    archaemenid: `gpu/count_cold` 1.2 ms, `gpu/count_warm` 56 ns —
+    **~22,000× ratio**, the load-bearing claim of ADR 0002.
+  - [`scripts/bench-history.sh`](scripts/bench-history.sh) — builds
+    every bench, parses `bench_report` output, appends to
+    [`docs/benchmarks/history.csv`](docs/benchmarks/history.csv),
+    auto-regenerates [`docs/benchmarks/results.md`](docs/benchmarks/results.md)
+    with the 3 most recent runs side-by-side and Δ first→last per
+    benchmark. Narrative companion at
+    [`docs/benchmarks.md`](docs/benchmarks.md).
+- **Roadmap reorder** — M4 is now "pre-consumer hardening" (v0.5.0,
+  this release); M5 is "first consumer integration (iam)" (v0.9.0).
+  See [`docs/development/roadmap.md`](docs/development/roadmap.md).
+
+### Changed
+- **`VERSION`**: 0.4.1 → 0.5.0.
+- **`cyrius.cyml`**: stdlib gains `bench` (required by `benches/*.bcyr`
+  builds; DCE removes it from `programs/smoke.cyr`).
+- **`docs/adr/README.md`** indexes both ADRs.
+- **`src/gpu.cyr`** header references ADR 0002 instead of inlining
+  the full cache-shape rationale.
+- **`docs/development/state.md`** — refreshed test count (104) and
+  bench reference.
+
+### Removed
+- **`tests/mihi.bcyr`** — obsolete stub. The `cyrius bench` runner
+  looks in `benches/` (per the sibling convention) so the old stub
+  was never discoverable anyway. `benches/probe_paths.bcyr` +
+  `benches/parsers.bcyr` + `benches/gpu_paths.bcyr` supersede it.
+
+### Open (v1.0 checklist remaining)
+- ☐ Security audit — `docs/audit/2026-05-19-audit.md`. Per the
+  `feedback-security-audit-web-research` memory note: must include
+  external CVE/0day research for every `/proc`, `/sys`, and syscall
+  surface mihi (or its ai-hwaccel transitive deps) touches. Targeted
+  for the next patch (0.5.1).
+- ☐ `dist/mihi.cyr` distlib determinism CI gate — mirror the
+  ai-hwaccel pattern (build, sha256, rebuild, compare). The bundle
+  is already deterministic; the gate just enforces it.
+- ☐ M5 / v0.9.0 — `iam` consumer integration, once iam itself
+  catches up.
+
 ## [0.4.1] — 2026-05-19
 
 **ai-hwaccel pin bump: 2.2.5 → 2.2.6 — closes both Known Issues from

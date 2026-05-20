@@ -5,6 +5,13 @@
 
 ## Version
 
+**0.5.0** — released 2026-05-19. Pre-consumer hardening: 100+ test
+assertions (104/104 across 38 groups), three-tier benchmark suite
+under `benches/` + `docs/benchmarks/` (archaemenid baseline captured),
+ADR 0002 for the gpu singleton cache, `docs/sources.md` Slice E.
+Roadmap M4↔M5 reordered: this cut is the "library ready for
+consumers" milestone; iam consumer integration shifts to v0.9.0.
+
 **0.4.1** — released 2026-05-19. Dep-pin refresh: ai-hwaccel 2.2.5 →
 2.2.6. Closes both Known Issues from 0.4.0 — ROCm device name now
 populates (`AMD Radeon (PCI 0x1002:0x1638)` on archaemenid) and the
@@ -43,8 +50,9 @@ M4 (`iam` consumer integration) is next.
 
 ## Tests
 
-- `tests/mihi.tcyr` — primary suite: 75 assertions across 28 test
-  groups. Slice A: real-uname happy path + zero-init buffer +
+- `tests/mihi.tcyr` — primary suite: 104 assertions across 38 test
+  groups (post-0.4.1 hardening push closed the v1.0 100-assertion
+  criterion). Slice A: real-uname happy path + zero-init buffer +
   synthetic-uts offset round-trip. Slice B: range-parser unit tests,
   cpuinfo-parser synthetic tests (happy + missing-field + line-anchor
   rejection), real `/proc/cpuinfo` + `/sys` reads. Slice C: meminfo
@@ -67,7 +75,7 @@ M4 (`iam` consumer integration) is next.
 cyrius deps
 cyrius build programs/smoke.cyr build/mihi-smoke
 ./build/mihi-smoke      # prints all 11+ lines including gpu cnt / gpu / gpu MiB + "mihi smoke ok", exit 0
-cyrius test             # 75/75 pass
+cyrius test             # 104/104 pass
 ```
 
 Build is clean as of 0.4.1 / ai-hwaccel 2.2.6 — only the cyrius

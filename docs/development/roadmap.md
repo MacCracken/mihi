@@ -57,6 +57,8 @@ buffers, no probe-internal allocation.
   `mihi_gpu_{name,memory_bytes,family,type}`) wrap ai-hwaccel 2.2.5's
   `registry_detect_no_exec()`. Module-level singleton cache means
   one detection pass per process; subsequent calls are O(n) vec walks.
+  See [ADR 0002](../adr/0002-gpu-singleton-cache.md) for the cache-
+  shape choice.
 - ✅ Single source per the *one source per fact* principle — sysfs
   reads via ai-hwaccel; no fallback chain to `lspci` / nvidia-smi /
   etc.
@@ -65,48 +67,84 @@ buffers, no probe-internal allocation.
   the `registry_detect_no_exec()` entry point that masks off the
   eight subprocess-shelling backends (CUDA, Apple, Vulkan, Gaudi,
   Neuron, Intel oneAPI, Cerebras, Graphcore) and skips
-  `detect_interconnects`. Mihi pins `[deps.ai-hwaccel] tag = "2.2.5"`
-  and calls only `registry_detect_no_exec()` — the no-exec contract
-  is enforced on the ai-hwaccel side.
+  `detect_interconnects`. Mihi pins `[deps.ai-hwaccel] tag = "2.2.6"`
+  (bumped from 2.2.5 in 0.4.1, see below) and calls only
+  `registry_detect_no_exec()` — the no-exec contract is enforced on
+  the ai-hwaccel side.
 - ✅ **Safe backends mihi sees**: ROCm, Intel NPU, AMD XDNA, TPU,
   Qualcomm, Groq, Samsung NPU, MediaTek APU — plus the sysfs
   post-passes (`enrich_bandwidth/pcie/numa`, `detect_storage`,
   `detect_environment`).
-- ✅ **Acceptance**: smoke prints `gpu cnt: 1 / gpu: (unnamed) /
-  gpu MiB: 3072` on archaemenid (Ryzen 5800H + Radeon iGPU).
-- **Open follow-ups (ai-hwaccel 2.2.6)**:
-  - `detect_rocm` doesn't populate `profile_device_name` — name comes
-    back null; mihi correctly reports null, smoke prints "(unnamed)".
-  - `cache.cyr`'s disk-write path references `registry_to_json` from
-    the excluded `json_out.cyr` — one persistent linker warning. DCE
-    elides the call. Fix: include `json_out.cyr` in the bundle or
-    feature-gate the disk-cache code.
+- ✅ **Acceptance**: smoke prints `gpu cnt: 1 / gpu: AMD Radeon
+  (PCI 0x1002:0x1638) / gpu MiB: 3072` on archaemenid (Ryzen 5800H +
+  Radeon iGPU).
 
-### M4 — First consumer integration (v0.5.0)
+### M3.1 — ai-hwaccel 2.2.6 dep refresh (v0.4.1) ✅ shipped 2026-05-19
 
-`iam` consumes mihi end-to-end. The library has to be **shape-stable**
-through this milestone; any signature changes are still breaking
-pre-v1.0 but should be ADR'd before landing.
+Pure dep-pin bump; no mihi source changed. Picks up upstream fixes
+that the 0.4.0 integration surfaced:
 
-- `iam` repo's `[deps.mihi]` block pinned to mihi v0.5.0.
+- ✅ `detect_rocm` now populates `profile_device_name` (prefers
+  `product_name` sysfs file, falls back to synthesized
+  `"AMD Radeon (PCI vendor:device)"`). Closes the "(unnamed)"
+  acceptance gap in M3 above.
+- ✅ Three more upstream detectors gained name population in 2.2.6
+  (TPU, Gaudi, Neuron) — not reachable on archaemenid but the gap is
+  closed for cloud-accelerator consumers.
+- ✅ ai-hwaccel 2.2.6 includes `src/json_out.cyr` in its bundle —
+  resolves the `undefined function 'registry_to_json'` linker
+  warning that 0.4.0 carried.
+
+### M4 — Pre-consumer hardening (v0.5.0)
+
+> **Reordered 2026-05-19**: this milestone was originally "first
+> consumer integration (iam)" with hardening at v0.9.0. The order
+> flipped because `iam` is still scaffold-only — pushing mihi closer
+> to v1.0 shape-stability *before* `iam` integrates avoids consumer-
+> side rework that signature drift would cause. M5 below now holds
+> the iam slot.
+
+The P(-1) polish pass from CLAUDE.md — lock determinism, capture
+benchmark baselines, run the security audit.
+
+- ✅ Test coverage ≥ 100 assertions (104 across 38 groups, hit in the
+  0.5.0 lead-up — see CHANGELOG).
+- ✅ Doc alignment — `docs/sources.md` Slice E + ADR 0002 (gpu
+  singleton cache) shipped pre-cut.
+- ✅ Benchmarks captured — `benches/probe_paths.bcyr` +
+  `benches/parsers.bcyr` + `benches/gpu_paths.bcyr`,
+  `scripts/bench-history.sh` writing `docs/benchmarks/history.csv` +
+  auto-regenerated `docs/benchmarks/results.md` (3-tier). Baseline on
+  archaemenid: probes 2–52 µs, parsers 45–700 ns, gpu cold→warm
+  ratio ~20,000× confirming ADR 0002.
+- ☐ Security audit — `docs/audit/2026-05-19-audit.md`. Per the
+  `feedback-security-audit-web-research` memory: internal review of
+  bounds / syscall returns / overflow + external CVE/0day research
+  for every `/proc` and `/sys` path mihi touches plus ai-hwaccel's
+  transitive surfaces.
+- ☐ `dist/mihi.cyr` distlib determinism CI gate (mirror of the
+  ai-hwaccel pattern — `cyrius distlib` twice + sha256 compare).
+
+### M5 — First consumer integration (v0.9.0)
+
+> **Reordered 2026-05-19**: was v0.5.0; now blocked behind M4 so
+> mihi's surface is benchmarked and audited before `iam` pins it.
+
+`iam` consumes mihi end-to-end. The library is now shape-stable
+(post-M4 audit); any breaking changes from this point onward warrant
+an ADR. iam's mihi integration drives the v1.0 "first consumer green"
+checkbox.
+
+- `iam` repo's `[deps.mihi]` block pinned to mihi v0.9.0.
 - Both repos build green in CI.
-- `iam` produces a real output line for every mihi probe.
+- `iam` produces a real output line for every mihi probe (kernel,
+  release, arch, host, model, cpus, mem total/free, uptime, distro,
+  plus the gpu slice).
 - **Dep gate**: iam v0.x reaches a state that exercises every mihi
-  probe.
+  probe. (As of 2026-05-19 iam is scaffold-only — the gate is open
+  pending iam itself.)
 - **Acceptance**: `iam` on archaemenid prints a complete system-info
   report sourced entirely from mihi.
-
-### M5 — distlib hardening + benchmarks (v0.9.0)
-
-The pre-v1.0 polish pass. Lock determinism, file the hot-path
-benchmark baseline, run the P(-1) hardening checklist from CLAUDE.md.
-
-- `dist/mihi.cyr` bundle stable — `cyrius distlib` output is
-  byte-deterministic across runs.
-- Benchmarks for CPU detect, mem total, hostname (the login-hot
-  path) with a 3-point trend in `docs/benchmarks.md`.
-- P(-1) hardening pass complete — security audit doc filed under
-  `docs/audit/YYYY-MM-DD-audit.md`.
 
 ### M6 — Second consumer (chakshu) green (v1.0.0)
 

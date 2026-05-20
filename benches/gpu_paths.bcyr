@@ -1,0 +1,77 @@
+# mihi benchmarks — gpu probe family.
+#
+# The accelerator probes live behind a module-level singleton cache
+# (see ADR 0002). Three benches capture the load-bearing claims of
+# that ADR:
+#
+#   gpu/count_cold  — first call after _mihi_gpu_registry = 0;
+#                     this is the full registry_detect_no_exec() walk
+#                     across /sys/class/drm, /sys/class/accel,
+#                     /sys/class/misc, /dev/*, the PCIe tree, NUMA.
+#   gpu/count_warm  — subsequent calls (cache hit); the cost reduces
+#                     to a vec_len + iteration over reg_profiles.
+#   gpu/accessor    — per-idx lookup (name/memory_bytes/family/type)
+#                     once the cache is warm.
+#
+# The cold/warm ratio is the ADR 0002 justification. Numbers move
+# wildly on different hardware (more sysfs nodes = more cold cost),
+# so the absolute baseline is host-specific; the ratio is what
+# matters for regression detection.
+
+include "src/main.cyr"
+
+alloc_init();
+
+println("=== mihi gpu paths (no-exec via ai-hwaccel) ===");
+
+# ----- gpu/count_cold — full detection sweep -------------------------
+
+# Loop is small because each iteration does a full /sys walk. 10
+# rounds is enough signal on a typical box (5800H + iGPU on
+# archaemenid finished in single-digit-ms total when this was
+# scaffolded; per-iter shows up in the µs-ms range depending on
+# vendor accelerators present).
+var b_cold = bench_new("gpu/count_cold");
+var ri = 0;
+while (ri < 10) {
+    _mihi_gpu_registry = 0;  # invalidate cache
+    bench_start(b_cold);
+    mihi_gpu_count();
+    bench_stop(b_cold);
+    ri = ri + 1;
+}
+bench_report(b_cold);
+
+# ----- gpu/count_warm — cache hit ------------------------------------
+
+# Cache is populated by the last cold iteration; mihi_gpu_count()
+# becomes a vec_len + linear scan over reg_profiles excluding CPU.
+# Batched because the warm path should be sub-microsecond.
+var b_warm = bench_new("gpu/count_warm");
+bench_batch_start(b_warm);
+ri = 0;
+while (ri < 100000) {
+    mihi_gpu_count();
+    ri = ri + 1;
+}
+bench_batch_stop(b_warm, 100000);
+bench_report(b_warm);
+
+# ----- gpu/accessor_name — per-idx lookup ----------------------------
+
+# Worst-case accessor: walks the registry profile vec from idx 0 to
+# the requested slot, skipping CPU profiles. With only one
+# accelerator present (archaemenid), idx 0 walks past one CPU then
+# returns. Real-world worst case (many GPUs) scales linearly.
+var b_acc = bench_new("gpu/accessor_name_idx0");
+bench_batch_start(b_acc);
+ri = 0;
+while (ri < 100000) {
+    mihi_gpu_name(0);
+    ri = ri + 1;
+}
+bench_batch_stop(b_acc, 100000);
+bench_report(b_acc);
+
+println("=== gpu_paths done ===");
+syscall(60, 0);
