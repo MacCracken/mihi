@@ -5,28 +5,34 @@
 > [`state.md`](state.md) — this file is the sequencing of what's
 > next, in what order, against what dependency gates.
 
-## v1.0 criteria
+## v1.0 criteria ✅ all met 2026-05-20
 
 The mihi v1.0 contract: a frozen probe surface that `iam`, `chakshu`,
 and downstream consumers can pin against indefinitely.
 
-- [ ] Probe API frozen — function signatures, return shapes, error
+- [x] Probe API frozen — function signatures, return shapes, error
       semantics documented and tested for the full module set
-      (`types` / `cpu` / `mem` / `kernel` / `host`)
-- [ ] Every probe has a `/proc`, `/sys`, or syscall source citation
+      (`types` / `cpu` / `mem` / `kernel` / `host` / `gpu`)
+- [x] Every probe has a `/proc`, `/sys`, or syscall source citation
       inline in the declaring function
-- [ ] `docs/sources.md` has one entry per probe with man-page /
-      kernel-doc reference
-- [ ] Test coverage: happy path + at least one error path
-      (missing file, malformed content) per probe; 100+ assertions
-- [ ] Benchmarks captured in `docs/benchmarks.md` for the hot
-      probes (CPU detect, mem total) — these run on every shell login
-- [ ] At least two downstream consumers green
-      ([`iam`](https://github.com/MacCracken/iam) +
-      [`chakshu`](https://github.com/MacCracken/chakshu))
-- [ ] Security audit pass (`docs/audit/YYYY-MM-DD-audit.md`) — bounds
-      on every `/proc` parse, syscall return handling, no allocator
-      dependency from probe internals
+- [x] `docs/sources.md` has one entry per probe with man-page /
+      kernel-doc reference (Slices A + B + C + D + E)
+- [x] Test coverage: happy path + at least one error path
+      (missing file, malformed content) per probe; **108 assertions
+      across 41 test groups**
+- [x] Benchmarks captured in `docs/benchmarks.md` for the hot
+      probes (CPU detect, mem total) — three-tier suite under
+      `benches/` with `scripts/bench-history.sh` writing the history
+      CSV
+- [x] At least two downstream consumers green —
+      [`iam`](https://github.com/MacCracken/iam) 0.9.0 RC (pinned
+      mihi 0.7.0) and
+      [`chakshu`](https://github.com/MacCracken/chakshu) 0.6.0
+      (pinned mihi 0.8.0)
+- [x] Security audit pass —
+      [`docs/audit/2026-05-19-audit.md`](../audit/2026-05-19-audit.md)
+      — bounds on every `/proc` parse, syscall return handling, no
+      allocator dependency from probe internals
 
 ## Milestones
 
@@ -187,20 +193,27 @@ v1.0 "first consumer green" checkbox.
 - **Acceptance ✅**: `iam` on archaemenid prints a complete
   system-info report sourced entirely from mihi.
 
-### M6 — Second consumer (chakshu) green (v1.0.0)
+### M6 — Second consumer (chakshu) green (v1.0.0) ✅ shipped 2026-05-20
 
 When `chakshu` consumes mihi cleanly for its base monitor-readout
 substrate, the API has crossed the "more than one consumer" gate
 that locks API freeze. Cut v1.0.0.
 
-- `chakshu` (a.k.a. `shu`) consumes mihi via `[deps.mihi]`.
-- **Dep gate**: chakshu is already started but pending a Cyrius
-  language update before integration.
-- Both consumers (iam + chakshu) tracked in `state.md` consumer
-  list.
-- API freeze announced in CHANGELOG `Breaking` section as a no-op
-  (signature already stable; the freeze is the contract change).
-- v1.0.0 cut.
+- ✅ `chakshu` (a.k.a. `shu`) consumes mihi via `[deps.mihi] tag =
+  "0.8.0"` as of chakshu-0.6.0 (2026-05-20). chakshu's Cyrius pin
+  also moved to 6.0.1, unblocking the integration the original
+  M6 entry called out as the gate.
+- ✅ Both consumers (iam + chakshu) now in `state.md`'s consumer
+  list as integrated, not planned.
+- ✅ Layered architecture established by the chakshu integration:
+  mihi owns identity / static-fact probes; chakshu owns per-frame
+  deltas (CPU%, disk rate, network rate, per-pid stats). Future
+  identity additions accrete on the mihi side rather than
+  re-introducing hand-rolled `/proc` reads in consumers.
+- ✅ API freeze announced in CHANGELOG `### Breaking` section as a
+  no-op — signatures already stable since 0.4.0; the "breaking"
+  is the contract change.
+- ✅ v1.0.0 cut.
 
 ## Out of scope (for v1.0)
 

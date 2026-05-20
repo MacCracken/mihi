@@ -4,6 +4,62 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0] — 2026-05-20
+
+**API freeze.** mihi's full probe surface — `types` / `cpu` / `mem` /
+`kernel` / `host` / `gpu`, 15 probes — is now contract. Both planned
+v1.0 consumers are integrated and green: **iam-0.9.0 RC** (pinned to
+mihi 0.7.0, will repin to 1.0.0 in lockstep) and **chakshu-0.6.0**
+(released 2026-05-20, pinned to mihi 0.8.0; closed mihi's M6 gate).
+Every v1.0 criterion from the roadmap checks: full module set
+shape-stable since 0.4.0, citations in declaring functions, complete
+`docs/sources.md`, 108 test assertions across happy + error paths,
+three-tier benchmark suite, security audit pass.
+
+From here, any signature / return-shape / error-semantics change is
+a real `Breaking` and requires a major-version bump.
+
+### Breaking
+- **API freeze** — no signatures, return shapes, or error semantics
+  changed in this cut. The "breaking" is the contract change: the
+  surface mihi-0.8.0 froze in shape, mihi-1.0.0 freezes in contract.
+  Pre-v1.0 churn ended at 0.4.0; the four cuts since (0.5.0, 0.6.0,
+  0.7.0, 0.8.0) added tests / docs / CI / consumer-acknowledgment
+  with zero probe-API drift. Anything that would have been a
+  pre-v1.0 `Breaking` becomes a major-version bump from here.
+
+### Changed
+- **`VERSION`**: 0.8.0 → 1.0.0.
+- **`cyrius.cyml`** — `cyrius` pin bumped 6.0.0 → 6.0.1 to match the
+  ecosystem (iam and chakshu both moved to 6.0.1 in their M5 / M2.5
+  integration cuts; the local wrapper has been 6.0.1 for the last
+  several mihi releases and `state.md` called the drift "cosmetic").
+  No source / bundle effect — distlib output is identical apart from
+  the version stamp.
+- **`dist/mihi.cyr`** — regenerated via `cyrius distlib` for the
+  v1.0.0 version stamp in the bundle header. Single-line diff;
+  module content byte-identical to 0.8.0 (which was itself
+  byte-identical to 0.7.0 — see chakshu-0.6.0 CHANGELOG for the
+  symmetric callout on the consumer side).
+- **`docs/development/roadmap.md`** — M6 ✅; every v1.0 criterion box
+  ticked.
+- **`docs/development/state.md`** — chakshu promoted to integrated
+  consumer; toolchain pin row updated to 6.0.1; `## Next` shifts to
+  post-v1.0 stewardship mode.
+
+### Notes
+- v1.0 is a *shape-and-contract* freeze, not a feature freeze. The
+  "Out of scope (for v1.0)" list in `roadmap.md` (Windows / macOS
+  probes, network info, monitoring concerns) remains the scope bar.
+  Additions that fit "tell me about this box" for the AGNOS userland
+  accrete here; anything outside the surface spins out into a
+  sibling lib (e.g. `mihi-net`).
+- iam will cut iam-1.0.0 in lockstep — see iam-0.9.0 CHANGELOG
+  *"mihi 1.0 ship is the only external gate."*
+- chakshu's per-frame delta loop remains chakshu-local; mihi owns
+  identity probes only. The layered split established in
+  chakshu-0.6.0 is the architectural contract going forward.
+
 ## [0.8.0] — 2026-05-19
 
 **M5 acknowledgment cut.** `iam` integrated against mihi 0.7.0 and is

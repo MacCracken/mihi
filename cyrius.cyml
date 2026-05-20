@@ -4,7 +4,7 @@ version = "${file:VERSION}"
 description = "मिही / mihi — system-info probe library (CPU / RAM / GPU / kernel / uptime / distro / hostname). Substrate for iam, chakshu, and other tools that need 'tell me about this box'. Maori: the formal self-introduction ceremony."
 license = "GPL-3.0-only"
 language = "cyrius"
-cyrius = "6.0.0"
+cyrius = "6.0.1"
 
 [build]
 # In-tree smoke binary — exercises the lib API end-to-end. Consumers

@@ -5,6 +5,17 @@
 
 ## Version
 
+**1.0.0** — released 2026-05-20. **API freeze.** Both M5 (iam) and
+M6 (chakshu) consumer gates closed; all seven v1.0 criteria from
+`roadmap.md` met. From here, signature / return-shape / error-
+semantics changes are real `Breaking` and require a major-version
+bump. v1.0 is shape-and-contract freeze, not feature freeze: the
+"Out of scope (for v1.0)" list in `roadmap.md` still bounds what
+mihi takes on. Cyrius toolchain pin bumped 6.0.0 → 6.0.1 (matches
+iam + chakshu; closes the cosmetic drift). `dist/mihi.cyr`
+regenerated for the version stamp; module content byte-identical
+to 0.8.0 / 0.7.0.
+
 **0.8.0** — released 2026-05-19. M5 acknowledgment cut. `iam`
 integrated against mihi 0.7.0 (sitting as iam-0.9.0 RC), no
 transitive fixes surfaced — the v0.8.x slot the 0.7.0 cut reserved
@@ -47,7 +58,9 @@ the same day (host identity); M1 covered kernel + CPU + memory.
 
 ## Toolchain
 
-- **Cyrius pin**: `6.0.0` (in `cyrius.cyml [package].cyrius`)
+- **Cyrius pin**: `6.0.1` (in `cyrius.cyml [package].cyrius`). Bumped
+  from 6.0.0 at the v1.0 cut to match iam + chakshu's pins; the
+  local wrapper has been 6.0.1 for several releases.
 
 ## Shape
 
@@ -58,9 +71,11 @@ bundle order; `cyrius distlib` concatenates them into
 
 ## Source
 
-M3 complete — 15 probes across kernel / cpu / mem / host / gpu.
-M4 (hardening) + M4.5 (distlib CI gate) + M5 (iam consumer) all
-shipped. M6 (chakshu) is the only milestone remaining before v1.0.
+**v1.0 — API frozen.** 15 probes across kernel / cpu / mem / host /
+gpu. All milestones shipped: M1 (kernel/cpu/mem), M2 (host identity),
+M3 (gpu via ai-hwaccel no-exec), M4 (hardening), M4.5 (distlib CI
+gate), M5 (iam consumer), M6 (chakshu consumer). Signatures, return
+shapes, and error semantics are now contract.
 
 - `src/types.cyr` — shared types (empty; `MihiInfo` deferred per ADR 0001)
 - `src/cpu.cyr` — `mihi_cpu_arch` ✅ + `mihi_cpu_count` ✅ + `mihi_cpu_model` ✅ (+ `mihi_parse_cpu_range` / `mihi_parse_cpu_model` pure-function helpers)
@@ -115,30 +130,38 @@ Direct (declared in `cyrius.cyml`):
 
 ## Consumers
 
-- [`iam`](https://github.com/MacCracken/iam) ✅ — **first consumer
-  integrated** as of iam-0.9.0 (2026-05-19), pinned at
-  `[deps.mihi] tag = "0.7.0"`. iam consumes the full mihi probe
-  surface (kernel / cpu / mem / host / gpu) end-to-end; the M6 RC
-  release notes confirm *"mihi 1.0 ship is the only external gate"*
-  on iam's side. iam will repin to mihi v1.0 in lockstep when the
-  freeze cuts.
+- [`iam`](https://github.com/MacCracken/iam) ✅ — first consumer
+  integrated as of iam-0.9.0 (2026-05-19), pinned at
+  `[deps.mihi] tag = "0.7.0"`. Consumes the full mihi probe surface
+  (kernel / cpu / mem / host / gpu) end-to-end. iam will repin to
+  mihi-1.0.0 and cut iam-1.0.0 in lockstep with this release.
+- [`chakshu`](https://github.com/MacCracken/chakshu) ✅ — second
+  consumer integrated as of chakshu-0.6.0 (2026-05-20), pinned at
+  `[deps.mihi] tag = "0.8.0"`. Consumes mihi for all identity /
+  static-fact reads (hostname, kernel, distro, CPU model, core count,
+  total/available memory, uptime, GPU/accelerators); chakshu owns
+  per-frame deltas (CPU%, disk rate, network rate, per-pid stats).
+  This integration closed mihi's M6 gate. chakshu will repin to
+  mihi-1.0.0 on its next cut.
 
-Planned but not yet integrated:
+Planned for post-v1.0:
 
-- [`chakshu`](https://github.com/MacCracken/chakshu) — second consumer
-  (M6 / v1.0). Blocked on chakshu's own Cyrius language update.
 - [`hapi`](https://github.com/MacCracken/hapi) — target-box info on
-  link/sync (post-v1.0).
+  link/sync.
 - [`BannerManor`](https://github.com/MacCracken/bannermanor) —
-  hostname for banner auto-detect (post-v1.0).
+  hostname for banner auto-detect.
 
 ## Next
 
-See [`roadmap.md`](roadmap.md) for the v1.0 plan. **M5 shipped as
-v0.8.0** (iam integrated against mihi 0.7.0; v0.8.0 was the
-acknowledgment cut). Only **M6 (chakshu)** remains before v1.0, and
-it's blocked externally on chakshu's Cyrius language update. The
-mihi side is feature-complete and shape-stable; no internal work is
-planned between now and the v1.0 cut. If a transitive fix surfaces
-from chakshu's eventual integration, it lands in a v0.9.x slot
-before v1.0 freezes the API.
+**v1.0 shipped — stewardship mode.** mihi is now API-frozen; future
+changes have to respect the contract or wait for v2.0. No internal
+work planned; the loop becomes (a) responding to consumer-side
+issues that surface in iam / chakshu / future consumers, (b) tracking
+upstream ai-hwaccel for dep bumps (current pin: 2.2.6), (c)
+absorbing additions that fit the "tell me about this box" surface
+without breaking signatures (additive-only).
+
+Anything outside the v1.0 contract — Windows / macOS, network probes,
+monitoring concerns — stays out of scope per `roadmap.md`. If a new
+domain needs probes, it spins out as a sibling lib (e.g. `mihi-net`)
+rather than expanding the mihi surface.
