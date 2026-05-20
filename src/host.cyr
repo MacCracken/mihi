@@ -42,14 +42,21 @@ fn mihi_hostname(uts): cstring {
 # digit. Pure parser — exposed for unit tests.
 # Source: kernel fs/proc/uptime.c::uptime_proc_show — writes
 # "%lu.%02lu %lu.%02lu\n" (uptime seconds + idle seconds).
+#
+# Defensive (2026-05-19 audit C-2): caps digit count at 18 to defend
+# against integer overflow on adversarial /proc/uptime content. Real
+# kernel uptime is bounded by clock resolution and process lifetime;
+# 10 digits covers ~300 years.
 fn mihi_parse_uptime_secs(buf, len): i64 {
     if (len <= 0) { return 0 - 1; }
     var p = 0;
     var v = 0;
     var has = 0;
-    while (p < len && load8(buf + p) >= 48 && load8(buf + p) <= 57) {
+    var d = 0;
+    while (p < len && load8(buf + p) >= 48 && load8(buf + p) <= 57 && d < 18) {
         v = v * 10 + (load8(buf + p) - 48);
         has = 1;
+        d = d + 1;
         p = p + 1;
     }
     if (has == 0) { return 0 - 1; }

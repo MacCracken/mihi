@@ -5,6 +5,12 @@
 
 ## Version
 
+**0.6.0** — released 2026-05-19. Security audit cut. Three defensive
+parser fixes (C-1 cpu_range descending, M-1 meminfo_kb overflow cap,
+C-2 same for cpu_range + uptime), four new regression tests, two
+transitive AMD GPU CVEs documented (CVE-2025-40288, CVE-2025-40289).
+Full audit in `docs/audit/2026-05-19-audit.md`. Probe API unchanged.
+
 **0.5.0** — released 2026-05-19. Pre-consumer hardening: 100+ test
 assertions (104/104 across 38 groups), three-tier benchmark suite
 under `benches/` + `docs/benchmarks/` (archaemenid baseline captured),
@@ -50,9 +56,9 @@ M4 (`iam` consumer integration) is next.
 
 ## Tests
 
-- `tests/mihi.tcyr` — primary suite: 104 assertions across 38 test
-  groups (post-0.4.1 hardening push closed the v1.0 100-assertion
-  criterion). Slice A: real-uname happy path + zero-init buffer +
+- `tests/mihi.tcyr` — primary suite: 108 assertions across 41 test
+  groups (104 from 0.5.0 hardening push + 4 from the 0.6.0 audit
+  regression tests). Slice A: real-uname happy path + zero-init buffer +
   synthetic-uts offset round-trip. Slice B: range-parser unit tests,
   cpuinfo-parser synthetic tests (happy + missing-field + line-anchor
   rejection), real `/proc/cpuinfo` + `/sys` reads. Slice C: meminfo
@@ -75,7 +81,7 @@ M4 (`iam` consumer integration) is next.
 cyrius deps
 cyrius build programs/smoke.cyr build/mihi-smoke
 ./build/mihi-smoke      # prints all 11+ lines including gpu cnt / gpu / gpu MiB + "mihi smoke ok", exit 0
-cyrius test             # 104/104 pass
+cyrius test             # 108/108 pass
 ```
 
 Build is clean as of 0.4.1 / ai-hwaccel 2.2.6 — only the cyrius

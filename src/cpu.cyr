@@ -28,6 +28,14 @@ fn mihi_cpu_arch(uts): cstring {
 # separators. Returns 0 if no digits found.
 # Source: Documentation/admin-guide/cputopology.rst, %*pbl format.
 # Pure-function — testable with synthetic buffers, no syscall.
+#
+# Defensive (2026-05-19 audit C-1, C-2):
+#   - Caps each digit accumulator at 18 digits (~10^18, well under
+#     i64 max). Prevents overflow on adversarial /sys content; the
+#     real kernel never emits more than ~5 digits per range bound.
+#   - Coerces descending ranges (hi < lo, e.g. "10-5") to single-CPU
+#     ranges. Real kernel output is always ascending; this defends
+#     against a corrupted /sys file producing a negative addend.
 fn mihi_parse_cpu_range(buf, len): i64 {
     var total = 0;
     var i = 0;
@@ -47,10 +55,12 @@ fn mihi_parse_cpu_range(buf, len): i64 {
             done = 1;
             continue;
         }
-        # parse lo
+        # parse lo (cap 18 digits — audit C-2 / overflow defense)
         var lo = 0;
-        while (i < len && load8(buf + i) >= 48 && load8(buf + i) <= 57) {
+        var ld = 0;
+        while (i < len && load8(buf + i) >= 48 && load8(buf + i) <= 57 && ld < 18) {
             lo = lo * 10 + (load8(buf + i) - 48);
+            ld = ld + 1;
             i = i + 1;
         }
         # optional -hi
@@ -58,11 +68,15 @@ fn mihi_parse_cpu_range(buf, len): i64 {
         if (i < len && load8(buf + i) == 45) {
             i = i + 1;
             hi = 0;
-            while (i < len && load8(buf + i) >= 48 && load8(buf + i) <= 57) {
+            var hd = 0;
+            while (i < len && load8(buf + i) >= 48 && load8(buf + i) <= 57 && hd < 18) {
                 hi = hi * 10 + (load8(buf + i) - 48);
+                hd = hd + 1;
                 i = i + 1;
             }
         }
+        # Coerce descending ranges (audit C-1).
+        if (hi < lo) { hi = lo; }
         total = total + (hi - lo + 1);
     }
     return total;

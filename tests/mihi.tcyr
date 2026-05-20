@@ -679,6 +679,67 @@ fn main() {
     assert_eq(_mihi_gpu_registry, first_ptr,
               "second call reuses the same registry pointer");
 
+    # ====================================================================
+    # 0.6.0 security audit — regression tests for C-1, M-1, C-2 fixes.
+    # See docs/audit/2026-05-19-audit.md for the full findings.
+    # ====================================================================
+
+    # ----- audit C-1: cpu_range descending is coerced ---------------
+    # "10-5" → 1 CPU (was: -3, corrupting total).
+    test_group("audit C-1 — cpu_range coerces descending");
+
+    var ad1[8];
+    store8(&ad1 + 0, 49); store8(&ad1 + 1, 48);  # "10"
+    store8(&ad1 + 2, 45);                          # "-"
+    store8(&ad1 + 3, 53);                          # "5"
+    assert_eq(mihi_parse_cpu_range(&ad1, 4), 1,
+              "'10-5' coerced to single CPU (hi=lo)");
+
+    # Mixed "0-3,10-5" → 4 + 1 = 5 (not 4 + -4 = 0)
+    var ad2[16];
+    store8(&ad2 + 0, 48); store8(&ad2 + 1, 45); store8(&ad2 + 2, 51);
+    store8(&ad2 + 3, 44);
+    store8(&ad2 + 4, 49); store8(&ad2 + 5, 48); store8(&ad2 + 6, 45);
+    store8(&ad2 + 7, 53);
+    assert_eq(mihi_parse_cpu_range(&ad2, 8), 5,
+              "'0-3,10-5' = 4 + 1 (descending coerced, not negative)");
+
+    # ----- audit M-1: meminfo_kb digit cap defends against overflow -
+    # A 19-digit value is the i64 boundary; mihi caps at 18 to leave
+    # headroom. 18 digits parses fully; the 19th is silently dropped
+    # (regression test asserts the cap behavior, not the value).
+    test_group("audit M-1 — meminfo_kb caps digits");
+
+    # 19-digit value "1234567890123456789" — parser should stop at
+    # 18 digits, yielding 123456789012345678 (last digit dropped).
+    var mlong = "MemTotal: 1234567890123456789 kB\n";
+    var mlong_buf[64];
+    var mlong_len: i64 = strlen(mlong);
+    var mlong_i = 0;
+    while (mlong_i < mlong_len) {
+        store8(&mlong_buf + mlong_i, load8(mlong + mlong_i));
+        mlong_i = mlong_i + 1;
+    }
+    var mlong_pos: i64 = mihi_find_meminfo_field(&mlong_buf, mlong_len, "MemTotal:", 9);
+    var mlong_kb: i64 = mihi_parse_meminfo_kb(&mlong_buf, mlong_len, mlong_pos);
+    assert_eq(mlong_kb, 123456789012345678,
+              "19-digit value truncated to 18 digits (cap engaged)");
+
+    # ----- audit C-2: uptime_secs same cap ---------------------------
+    test_group("audit C-2 — uptime_secs caps digits");
+
+    var ulong = "1234567890123456789.00 100.00\n";
+    var ulong_buf[48];
+    var ulong_len: i64 = strlen(ulong);
+    var ulong_i = 0;
+    while (ulong_i < ulong_len) {
+        store8(&ulong_buf + ulong_i, load8(ulong + ulong_i));
+        ulong_i = ulong_i + 1;
+    }
+    assert_eq(mihi_parse_uptime_secs(&ulong_buf, ulong_len),
+              123456789012345678,
+              "uptime 19-digit input capped at 18 digits");
+
     return assert_summary();
 }
 

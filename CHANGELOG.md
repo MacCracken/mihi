@@ -4,6 +4,69 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-05-19
+
+**Security audit + defensive parser fixes.** Per-CLAUDE.md P(-1)
+checklist item, with the
+[`feedback-security-audit-web-research`](memory)-memory guidance
+applied: every audit pass must combine internal review with external
+CVE/0day research, never just one. Full findings in
+[`docs/audit/2026-05-19-audit.md`](docs/audit/2026-05-19-audit.md).
+
+No critical findings — three defensive parser hardenings landed
+(C-1, M-1, C-2) and two transitive AMD GPU CVEs are documented for
+consumer awareness. The probe API is unchanged.
+
+### Fixed (audit findings)
+- **C-1** — `mihi_parse_cpu_range` (`src/cpu.cyr`) now coerces
+  descending ranges (`"10-5"`) to single-CPU ranges instead of
+  producing a negative addend. Real kernel output never emits
+  descending ranges; this defends against corrupted `/sys` content.
+- **M-1** — `mihi_parse_meminfo_kb` (`src/mem.cyr`) caps digit
+  accumulation at 18 to prevent i64 overflow on adversarial input.
+  Real `/proc/meminfo` values are bounded by physical RAM (~10
+  digits in kB); 18 leaves headroom.
+- **C-2** — Same overflow defense applied to the lo/hi
+  accumulators in `mihi_parse_cpu_range` and to
+  `mihi_parse_uptime_secs` (`src/host.cyr`). All three digit-parsing
+  parsers now share the same cap.
+- Regression tests added: `audit C-1 — cpu_range coerces
+  descending`, `audit M-1 — meminfo_kb caps digits`, `audit C-2 —
+  uptime_secs caps digits`. Suite grows 104 → 108 assertions.
+
+### Known Environmental Issues (kernel CVEs, no mihi-side fix)
+
+These are upstream Linux kernel bugs that mihi cannot avoid; the
+audit documents them so consumers running on affected kernels know
+to upgrade. Both are AMD-GPU-specific and reach mihi only via the
+`mihi_gpu_*` family (ai-hwaccel's `detect_rocm` sysfs path).
+
+- **[CVE-2025-40289](https://nvd.nist.gov/vuln/detail/CVE-2025-40289)** —
+  Reading `/sys/class/drm/cardN/device/mem_info_vram_total` (or
+  `_used`) crashes the kernel on some AMD GPUs without dedicated
+  VRAM. The fix hides the sysfs attribute on those GPUs.
+  Recommend mainline Linux 6.15+ or a distro kernel with the
+  backport. archaemenid's `7.0.5-arch1-1` is not affected.
+- **[CVE-2025-40288](https://nvd.nist.gov/vuln/detail/CVE-2025-40288)** —
+  NULL pointer deref in `ttm_resource_manager_usage()` on APU
+  platforms where the VRAM manager isn't initialized. Same
+  hardware exposure class as 40289. Same recommendation.
+
+### Changed
+- **`VERSION`**: 0.5.0 → 0.6.0.
+- **`docs/development/roadmap.md`** — M4 audit checkbox flipped ✅;
+  added M4.5 entry for the v0.7.0 distlib hardening (per the user's
+  sequencing); M5 (iam consumer) still v0.9.0.
+- **`docs/development/state.md`** — refreshed for 0.6.0; test count
+  104 → 108; audit doc referenced.
+
+### Open (post-0.6.0)
+- v0.7.0 — distlib determinism CI gate (per ai-hwaccel's pattern).
+- v0.9.0 (M5) — `iam` consumer integration, blocked on iam
+  itself catching up.
+- v1.0.0 (M6) — `chakshu` second consumer, blocked on chakshu's
+  language update.
+
 ## [0.5.0] — 2026-05-19
 
 **Pre-consumer hardening — mihi's v1.0 shape, validated.** Roadmap

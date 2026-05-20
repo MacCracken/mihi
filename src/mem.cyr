@@ -43,6 +43,11 @@ fn mihi_find_meminfo_field(buf, len, field, field_len): i64 {
 # Parse a meminfo value: skip whitespace (tab/space), accumulate
 # decimal digits, return the kB integer or 0 - 1 if no digit appears.
 # Caller has already located the start position past the field colon.
+#
+# Defensive (2026-05-19 audit M-1): caps digit accumulator at 18
+# digits — i64 max is 19 digits, so 18 leaves headroom against the
+# multiply-by-10 overflow. Real /proc/meminfo never emits more than
+# ~10 digits per field (16 EiB is the practical ceiling).
 fn mihi_parse_meminfo_kb(buf, len, start): i64 {
     var p = start;
     while (p < len && (load8(buf + p) == 9 || load8(buf + p) == 32)) {
@@ -51,9 +56,11 @@ fn mihi_parse_meminfo_kb(buf, len, start): i64 {
     if (p >= len) { return 0 - 1; }
     var v = 0;
     var has = 0;
-    while (p < len && load8(buf + p) >= 48 && load8(buf + p) <= 57) {
+    var d = 0;
+    while (p < len && load8(buf + p) >= 48 && load8(buf + p) <= 57 && d < 18) {
         v = v * 10 + (load8(buf + p) - 48);
         has = 1;
+        d = d + 1;
         p = p + 1;
     }
     if (has == 0) { return 0 - 1; }

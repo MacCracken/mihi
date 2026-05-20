@@ -95,54 +95,66 @@ that the 0.4.0 integration surfaced:
   resolves the `undefined function 'registry_to_json'` linker
   warning that 0.4.0 carried.
 
-### M4 — Pre-consumer hardening (v0.5.0)
+### M4 — Pre-consumer hardening (v0.5.0 + v0.6.0)
 
 > **Reordered 2026-05-19**: this milestone was originally "first
 > consumer integration (iam)" with hardening at v0.9.0. The order
 > flipped because `iam` is still scaffold-only — pushing mihi closer
 > to v1.0 shape-stability *before* `iam` integrates avoids consumer-
-> side rework that signature drift would cause. M5 below now holds
-> the iam slot.
+> side rework that signature drift would cause.
 
-The P(-1) polish pass from CLAUDE.md — lock determinism, capture
-benchmark baselines, run the security audit.
+The P(-1) polish pass from CLAUDE.md — test coverage, benchmark
+baselines, security audit. Spans two cuts (v0.5.0 + v0.6.0).
 
-- ✅ Test coverage ≥ 100 assertions (104 across 38 groups, hit in the
-  0.5.0 lead-up — see CHANGELOG).
+- ✅ Test coverage ≥ 100 assertions — landed in 0.5.0 (104), grew to
+  108 with the 0.6.0 audit-regression tests.
 - ✅ Doc alignment — `docs/sources.md` Slice E + ADR 0002 (gpu
-  singleton cache) shipped pre-cut.
+  singleton cache) shipped in 0.5.0.
 - ✅ Benchmarks captured — `benches/probe_paths.bcyr` +
   `benches/parsers.bcyr` + `benches/gpu_paths.bcyr`,
   `scripts/bench-history.sh` writing `docs/benchmarks/history.csv` +
   auto-regenerated `docs/benchmarks/results.md` (3-tier). Baseline on
   archaemenid: probes 2–52 µs, parsers 45–700 ns, gpu cold→warm
-  ratio ~20,000× confirming ADR 0002.
-- ☐ Security audit — `docs/audit/2026-05-19-audit.md`. Per the
-  `feedback-security-audit-web-research` memory: internal review of
-  bounds / syscall returns / overflow + external CVE/0day research
-  for every `/proc` and `/sys` path mihi touches plus ai-hwaccel's
-  transitive surfaces.
-- ☐ `dist/mihi.cyr` distlib determinism CI gate (mirror of the
-  ai-hwaccel pattern — `cyrius distlib` twice + sha256 compare).
+  ratio ~20,000× confirming ADR 0002. (0.5.0)
+- ✅ Security audit (v0.6.0) — `docs/audit/2026-05-19-audit.md`
+  filed. Internal review (3 defensive parser fixes — C-1, M-1, C-2)
+  + external CVE research (2 transitive AMD GPU CVEs documented for
+  consumer awareness: CVE-2025-40289, CVE-2025-40288). No critical
+  findings; probe API unchanged.
+
+### M4.5 — distlib hardening (v0.7.0)
+
+CI-enforced determinism for the consumer-facing bundle. Mirrors the
+ai-hwaccel + libro + yukti pattern: build the bundle, sha256 it,
+re-build, compare. Any drift fails the build.
+
+- ☐ `cyrius distlib` runs in CI; `dist/mihi.cyr` SHA pinned per
+  commit.
+- ☐ Determinism rebuild gate — the second invocation in the same
+  CI step must produce a byte-identical bundle.
+- ☐ Drift gate — if a contributor forgets to regenerate `dist/`
+  after touching `src/`, the diff fails the build.
+- **Acceptance**: CI workflow has a `distlib drift + determinism`
+  step that sits between `Lint` and `Build (DCE)`.
 
 ### M5 — First consumer integration (v0.9.0)
 
-> **Reordered 2026-05-19**: was v0.5.0; now blocked behind M4 so
-> mihi's surface is benchmarked and audited before `iam` pins it.
+> **Reordered 2026-05-19**: was v0.5.0; now blocked behind M4
+> (hardening) + M4.5 (distlib) so mihi's surface is benchmarked,
+> audited, and bundle-deterministic before `iam` pins it.
 
-`iam` consumes mihi end-to-end. The library is now shape-stable
-(post-M4 audit); any breaking changes from this point onward warrant
-an ADR. iam's mihi integration drives the v1.0 "first consumer green"
-checkbox.
+`iam` consumes mihi end-to-end. The library is shape-stable post-M4
+audit (no findings required signature changes); breaking changes from
+this point onward warrant an ADR. iam's mihi integration drives the
+v1.0 "first consumer green" checkbox.
 
 - `iam` repo's `[deps.mihi]` block pinned to mihi v0.9.0.
 - Both repos build green in CI.
 - `iam` produces a real output line for every mihi probe (kernel,
   release, arch, host, model, cpus, mem total/free, uptime, distro,
   plus the gpu slice).
-- **Dep gate**: iam v0.x reaches a state that exercises every mihi
-  probe. (As of 2026-05-19 iam is scaffold-only — the gate is open
-  pending iam itself.)
+- **Dep gate**: iam catches up next boot cycle (still scaffold-only
+  as of 2026-05-19) — `iam` will be mihi's first consumer.
 - **Acceptance**: `iam` on archaemenid prints a complete system-info
   report sourced entirely from mihi.
 
@@ -152,7 +164,9 @@ When `chakshu` consumes mihi cleanly for its base monitor-readout
 substrate, the API has crossed the "more than one consumer" gate
 that locks API freeze. Cut v1.0.0.
 
-- `chakshu` consumes mihi via `[deps.mihi]`.
+- `chakshu` (a.k.a. `shu`) consumes mihi via `[deps.mihi]`.
+- **Dep gate**: chakshu is already started but pending a Cyrius
+  language update before integration.
 - Both consumers (iam + chakshu) tracked in `state.md` consumer
   list.
 - API freeze announced in CHANGELOG `Breaking` section as a no-op
