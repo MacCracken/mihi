@@ -4,6 +4,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-06-06 (cycle-open: AGNOS as a build target)
+
+### Added
+
+- **AGNOS platform support — cycle opened** (VERSION → 1.1.0). Adding an inline `CYRIUS_TARGET_AGNOS` path so mihi probes the live kernel via the new sovereign syscalls — `uname`#34 (kernel name / version / hostname / arch) and `sysinfo`#35 (uptime / total+free RAM / proc + cpu counts) — instead of Linux `/proc`. Inline per probe (`#ifdef CYRIUS_TARGET_AGNOS`), **no shared platform-abstraction layer yet** — extract later only if a second sovereign target needs it.
+
 ## [1.0.0] — 2026-05-20
 
 **API freeze.** mihi's full probe surface — `types` / `cpu` / `mem` /
