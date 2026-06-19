@@ -4,11 +4,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [1.1.0] — 2026-06-06 (cycle-open: AGNOS as a build target)
+## [1.1.0] — 2026-06-06 (cycle-open: AGNOS as a build target — PREP done, full build deferred to 1.43.x)
 
-### Added
+### Added (prep — full agnos build blocked, see below)
 
-- **AGNOS platform support — cycle opened** (VERSION → 1.1.0). Adding an inline `CYRIUS_TARGET_AGNOS` path so mihi probes the live kernel via the new sovereign syscalls — `uname`#34 (kernel name / version / hostname / arch) and `sysinfo`#35 (uptime / total+free RAM / proc + cpu counts) — instead of Linux `/proc`. Inline per probe (`#ifdef CYRIUS_TARGET_AGNOS`), **no shared platform-abstraction layer yet** — extract later only if a second sovereign target needs it.
+- **AGNOS platform prep** (VERSION → 1.1.0; cyrius pin 6.0.1 → 6.0.56, lib re-vendored). The kernel-interface dep is rewired from the toolchain-bundled `agnosys` stdlib entry to a proper **`[deps.agnosys]` git dep at 1.4.0** (`dist/agnosys-core.cyr`) — the agnos-aware build that resolves `uname`#34 / `sysinfo`#35 (no Linux `/proc`). That blocker is cleared.
+
+### Deferred to 1.43.x (graphics arc)
+
+- **mihi's full `--agnos` build is blocked by its GPU probe**, not by mihi's own probes. `src/gpu.cyr` pulls `ai-hwaccel` → `thread` → `atomic` → Linux `CLONE_VM`; cyrius `atomic`/`thread` are **stdlib (hands-off)** and can't target agnos until agnos *has* threads (the future multi-threading / SMP arc). GPU detection is itself a graphics concern, so it revisits **with 1.43.x graphics** — at which point the GPU probe is separated to a Linux-only profile (or built back in for agnos alongside the GPU surface), and the core probes (cpu/mem/kernel/uptime/hostname via `agnosys-core` + `sysinfo`#35) finish. The inline `#ifdef CYRIUS_TARGET_AGNOS` probe branches land then.
 
 ## [1.0.0] — 2026-05-20
 
