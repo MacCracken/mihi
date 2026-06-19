@@ -5,6 +5,29 @@
 
 ## Version
 
+**1.1.1** — released 2026-06-18. Toolchain-pin / stdlib-reorg
+maintenance cut. Cyrius pin **6.0.56 → 6.2.22** (ecosystem stdlib-pin
+sweep); `cyrius lib sync` re-vendored the 6.2.22 snapshot. The 6.2.x
+stdlib reorg carved the standalone `json` module out of the cyrius
+stdlib into the bundled **`bayan`** distribution (json / toml / cyml /
+csv / base64 / bigint / u128, folded back byte-identical via the
+sandhi pattern), so `json` → `bayan` in `[deps] stdlib`; mihi's only
+JSON use is the `registry_to_json` symbols inside `dist/ai-hwaccel.cyr`,
+which resolve through bayan's back-compat aliases. Orphaned
+`lib/json.cyr` pruned. No probe source changes; API still frozen.
+`dist/mihi.cyr` regenerated for the version stamp (module content
+byte-identical to 1.1.0). Verified green: deps resolve (109 locked),
+build OK, smoke exits 0, `cyrius test` 108/108.
+
+**1.1.0** — released 2026-06-06. Cycle-open: AGNOS as a build target
+(PREP done, full build deferred to 1.43.x graphics arc). Cyrius pin
+6.0.1 → 6.0.56, lib re-vendored. The kernel-interface dep rewired from
+the toolchain-bundled `agnosys` stdlib entry to a proper
+`[deps.agnosys]` git dep at 1.4.0 (`dist/agnosys-core.cyr`) — the
+agnos-aware build resolving `uname`#34 / `sysinfo`#35. mihi's full
+`--agnos` build remains blocked by its GPU probe (ai-hwaccel → thread →
+atomic → Linux `CLONE_VM`), revisited with 1.43.x graphics.
+
 **1.0.0** — released 2026-05-20. **API freeze.** Both M5 (iam) and
 M6 (chakshu) consumer gates closed; all seven v1.0 criteria from
 `roadmap.md` met. From here, signature / return-shape / error-
@@ -58,9 +81,12 @@ the same day (host identity); M1 covered kernel + CPU + memory.
 
 ## Toolchain
 
-- **Cyrius pin**: `6.0.1` (in `cyrius.cyml [package].cyrius`). Bumped
-  from 6.0.0 at the v1.0 cut to match iam + chakshu's pins; the
-  local wrapper has been 6.0.1 for several releases.
+- **Cyrius pin**: `6.2.22` (in `cyrius.cyml [package].cyrius`). Bumped
+  6.0.56 → 6.2.22 at the 1.1.1 cut in the ecosystem stdlib-pin sweep;
+  `cyrius lib sync` re-vendored the 6.2.22 snapshot into `lib/`. The
+  6.2.x stdlib reorg folded the standalone `json` module into the
+  bundled `bayan` distribution, so `[deps] stdlib` lists `bayan` (not
+  `json`); the orphaned `lib/json.cyr` was pruned.
 
 ## Shape
 
@@ -116,15 +142,14 @@ cyrius build programs/smoke.cyr build/mihi-smoke
 cyrius test             # 108/108 pass
 ```
 
-Build is clean as of 0.4.1 / ai-hwaccel 2.2.6 — only the cyrius
-toolchain-pin-drift note remains (cosmetic; 6.0.0 pin matches 6.0.0
-cycc, snapshot just predates the warning suppression).
+Build is clean as of 1.1.1 / ai-hwaccel 2.2.6 — the toolchain-pin
+drift is resolved (manifest pin and local wrapper both 6.2.22).
 
 ## Dependencies
 
 Direct (declared in `cyrius.cyml`):
 
-- **stdlib** — string, fmt, alloc, io, vec, str, slice, syscalls, assert, agnosys, plus (added for the ai-hwaccel bundle) fs, tagged, process, fnptr, thread, freelist, hashmap, ct, json. DCE drops unused code from the linked binary.
+- **stdlib** — string, fmt, alloc, io, vec, str, slice, syscalls, assert, plus (added for the ai-hwaccel bundle) fs, tagged, process, fnptr, thread, freelist, hashmap, ct, bayan (the 6.2.x data-format bundle that absorbed the standalone `json` module — ai-hwaccel's `registry_to_json` symbols resolve through bayan's back-compat aliases). DCE drops unused code from the linked binary.
 - **agnosys** — Result-based wrapper over `uname(2)` / `sysinfo(2)`. mihi's uname-backed probes share one syscall through `agnosys_uname`. See [ADR 0001](../adr/0001-shared-uts-buffer.md).
 - **ai-hwaccel 2.2.6** — accelerator detection. 2.2.5 was the first release with the no-exec contract (`registry_detect_no_exec()` masks off the eight subprocess-shelling backends); 2.2.6 closed the device-name + bundling gaps mihi's 0.4.0 integration surfaced. Without the no-exec contract mihi couldn't honor the "probes are pure reads" rule.
 

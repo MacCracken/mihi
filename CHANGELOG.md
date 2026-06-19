@@ -4,6 +4,34 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.1.1] — 2026-06-18
+
+Toolchain-pin / stdlib-reorg maintenance cut. No probe source changes;
+probe API unchanged (still frozen since 1.0.0).
+
+### Changed
+
+- **`cyrius.cyml`** — `cyrius` pin bumped **6.0.56 → 6.2.22** (ecosystem
+  stdlib-pin sweep onto the current toolchain). `cyrius lib sync`
+  re-vendored the 6.2.22 stdlib snapshot into `lib/`.
+- **`json` → `bayan` in the `[deps] stdlib` list.** In the 6.2.x stdlib
+  reorg the standalone `json` module was carved out of the cyrius stdlib
+  into the bundled **`bayan`** distribution (json / toml / cyml / csv /
+  base64 / bigint / u128) and folded back byte-identical via the sandhi
+  pattern. mihi calls no JSON directly — the `registry_to_json` symbols
+  inside `dist/ai-hwaccel.cyr` now resolve through bayan's back-compat
+  aliases. The orphaned `lib/json.cyr` (absent from the 6.2.22 snapshot)
+  was pruned.
+- **`VERSION`**: 1.1.0 → 1.1.1.
+- **`dist/mihi.cyr`** — regenerated via `cyrius distlib` for the v1.1.1
+  version stamp. Module content byte-identical to 1.1.0.
+
+### Notes
+
+- Verified green on 6.2.22: `cyrius deps` resolves cleanly (109 deps
+  locked), `cyrius build programs/smoke.cyr` OK, smoke binary prints the
+  full probe surface and exits 0, `cyrius test` 108/108.
+
 ## [1.1.0] — 2026-06-06 (cycle-open: AGNOS as a build target — PREP done, full build deferred to 1.43.x)
 
 ### Added (prep — full agnos build blocked, see below)
