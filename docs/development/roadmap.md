@@ -232,6 +232,19 @@ Keeps future contributors from adding to v1.0 by accident.
 - **Caching layer** — every probe is a fresh read.
 - **Daemon mode** — mihi is a library, not a service.
 
+## Pending upstream — agnosys → agnodrm decomposition
+
+- [ ] **Re-source `uname` off agnosys-core.** mihi uses `agnosys_uname` + the
+  `UTS_*` offsets (kernel release / hostname / machine), which lived in agnosys's
+  `syscall.cyr`. The agnosys → agnodrm decomposition (2026-06-19) removed that
+  syscall layer from agnodrm; its replacement is a cross-target uname/sysinfo
+  surface **filed as a cyrius request** (not yet landed). Until then mihi resolves
+  `agnosys_uname` via the agnosys → agnodrm GitHub redirect on the pinned `1.4.0`
+  tag (old content intact — **not broken**). **Unblocker:** cyrius adopts the
+  sysinfo/uname value-add → mihi sources `uname` from cyrius stdlib and drops
+  `[deps.agnosys]`. (A Linux uname wrapper could be inlined sooner for a clean
+  break, at the cost of temporary duplication.) Gates iam's matching drop.
+
 ## Cross-references
 
 - [`state.md`](state.md) — live status (current version, sizes,

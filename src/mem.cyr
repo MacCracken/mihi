@@ -81,12 +81,21 @@ fn mihi_extract_meminfo_bytes(buf, len, field, field_len): i64 {
 # return total RAM in bytes. Returns 0 - 1 on open/read/parse failure.
 # Source: man 5 proc; kernel fs/proc/meminfo.c::meminfo_proc_show().
 fn mihi_mem_total(buf, cap): i64 {
+    #ifdef CYRIUS_TARGET_AGNOS
+    # AGNOS has no /proc/meminfo — total RAM comes from sysinfo#35 (via
+    # agnosys query_sysinfo; SI_TOTALRAM is reported in bytes directly).
+    var si[120];
+    if (is_ok(query_sysinfo(&si)) == 0) { return 0 - 1; }
+    return sysinfo_total_memory(&si);
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
     var fd = sys_open("/proc/meminfo", O_RDONLY, 0);
     if (fd < 0) { return 0 - 1; }
     var n = sys_read(fd, buf, cap);
     sys_close(fd);
     if (n <= 0) { return 0 - 1; }
     return mihi_extract_meminfo_bytes(buf, n, "MemTotal:", 9);
+    #endif
 }
 
 # Read /proc/meminfo, parse MemAvailable, return available RAM in

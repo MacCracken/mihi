@@ -4,6 +4,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.1.2] — 2026-06-19
+
+AGNOS build-target support for the probes. Probe API unchanged.
+
+### Added
+
+- **`#ifdef CYRIUS_TARGET_AGNOS` branches** for the probes that read Linux `/proc`+`/sys` (absent on the sovereign kernel):
+  - `mihi_mem_total` → `query_sysinfo` / `sysinfo_total_memory` (sysinfo#35, bytes).
+  - `mihi_uptime_secs` → `sysinfo_uptime` (sysinfo#35, seconds).
+  - `mihi_cpu_count` → `1` (committed single-core gate, agnos 1.44.24; revisit when SMP unlocks).
+  - `mihi_distro` → `"AGNOS"` (no `/etc/os-release` on the native target).
+  The uname-based probes (`kernel_name`/`kernel_version`/`cpu_arch`/`hostname`) were already agnos-portable via `agnosys_uname` (#34). `mem_free`/`cpu_model`/`gpu` degrade gracefully to unknown on agnos (no sysinfo equivalent).
+
+### Verified
+
+- **On real agnos (kernel 1.45.10) under QEMU** via iam: the card renders `Distro: AGNOS`, `Kernel: AGNOS`, `Uptime: <1m`, `Memory: 128 MiB` (the real PMM size, via sysinfo#35). Host tests **108/108** (Linux paths intact). Harness: `agnos/scripts/iam-agnos-verify.py`.
+
 ## [1.1.1] — 2026-06-18
 
 Toolchain-pin / stdlib-reorg maintenance cut. No probe source changes;

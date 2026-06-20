@@ -100,6 +100,12 @@ fn mihi_parse_cpu_range(buf, len): i64 {
 # Returns logical CPU count, or 0 - 1 on open/read error.
 # Source: kernel/cpu.c::cpu_online_mask exported via sysfs.
 fn mihi_cpu_count(): i64 {
+    #ifdef CYRIUS_TARGET_AGNOS
+    # AGNOS has no /sys; the kernel runs single-core today (committed
+    # smp_wake_enabled=0 gate, agnos 1.44.24). Report 1 — revisit when SMP unlocks.
+    return 1;
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
     var buf[64];
     var fd = sys_open("/sys/devices/system/cpu/online", O_RDONLY, 0);
     if (fd < 0) { return 0 - 1; }
@@ -107,6 +113,7 @@ fn mihi_cpu_count(): i64 {
     sys_close(fd);
     if (n <= 0) { return 0 - 1; }
     return mihi_parse_cpu_range(&buf, n);
+    #endif
 }
 
 # ----- Slice B — /proc/cpuinfo model name ---------------------------
@@ -256,12 +263,21 @@ fn mihi_extract_meminfo_bytes(buf, len, field, field_len): i64 {
 # return total RAM in bytes. Returns 0 - 1 on open/read/parse failure.
 # Source: man 5 proc; kernel fs/proc/meminfo.c::meminfo_proc_show().
 fn mihi_mem_total(buf, cap): i64 {
+    #ifdef CYRIUS_TARGET_AGNOS
+    # AGNOS has no /proc/meminfo — total RAM comes from sysinfo#35 (via
+    # agnosys query_sysinfo; SI_TOTALRAM is reported in bytes directly).
+    var si[120];
+    if (is_ok(query_sysinfo(&si)) == 0) { return 0 - 1; }
+    return sysinfo_total_memory(&si);
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
     var fd = sys_open("/proc/meminfo", O_RDONLY, 0);
     if (fd < 0) { return 0 - 1; }
     var n = sys_read(fd, buf, cap);
     sys_close(fd);
     if (n <= 0) { return 0 - 1; }
     return mihi_extract_meminfo_bytes(buf, n, "MemTotal:", 9);
+    #endif
 }
 
 # Read /proc/meminfo, parse MemAvailable, return available RAM in
@@ -392,12 +408,20 @@ fn mihi_parse_uptime_secs(buf, len): i64 {
 # Returns 0 - 1 on open/read/parse failure.
 # Source: man 5 proc; kernel fs/proc/uptime.c::uptime_proc_show().
 fn mihi_uptime_secs(buf, cap): i64 {
+    #ifdef CYRIUS_TARGET_AGNOS
+    # AGNOS has no /proc/uptime — uptime comes from sysinfo#35 (SI_UPTIME, secs).
+    var si[120];
+    if (is_ok(query_sysinfo(&si)) == 0) { return 0 - 1; }
+    return sysinfo_uptime(&si);
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
     var fd = sys_open("/proc/uptime", O_RDONLY, 0);
     if (fd < 0) { return 0 - 1; }
     var n = sys_read(fd, buf, cap);
     sys_close(fd);
     if (n <= 0) { return 0 - 1; }
     return mihi_parse_uptime_secs(buf, n);
+    #endif
 }
 
 # ----- mihi_distro — /etc/os-release PRETTY_NAME / ID ----------------
@@ -466,6 +490,12 @@ fn mihi_parse_osrelease_value(buf, len, start): cstring {
 # in place), or 0 (null) on open/read/parse failure.
 # Source: man 5 os-release; freedesktop.org/software/systemd/man/os-release.html.
 fn mihi_distro(buf, cap): cstring {
+    #ifdef CYRIUS_TARGET_AGNOS
+    # /etc/os-release is a Linux-userland concept (lives in the rootfs); on the
+    # sovereign target the distro IS the OS. Report it directly.
+    return "AGNOS";
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
     var fd = sys_open("/etc/os-release", O_RDONLY, 0);
     if (fd < 0) { return 0; }
     var n = sys_read(fd, buf, cap);
@@ -477,6 +507,7 @@ fn mihi_distro(buf, cap): cstring {
     }
     if (start < 0) { return 0; }
     return mihi_parse_osrelease_value(buf, n, start);
+    #endif
 }
 
 # --- gpu.cyr ---

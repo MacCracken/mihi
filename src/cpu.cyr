@@ -86,6 +86,12 @@ fn mihi_parse_cpu_range(buf, len): i64 {
 # Returns logical CPU count, or 0 - 1 on open/read error.
 # Source: kernel/cpu.c::cpu_online_mask exported via sysfs.
 fn mihi_cpu_count(): i64 {
+    #ifdef CYRIUS_TARGET_AGNOS
+    # AGNOS has no /sys; the kernel runs single-core today (committed
+    # smp_wake_enabled=0 gate, agnos 1.44.24). Report 1 — revisit when SMP unlocks.
+    return 1;
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
     var buf[64];
     var fd = sys_open("/sys/devices/system/cpu/online", O_RDONLY, 0);
     if (fd < 0) { return 0 - 1; }
@@ -93,6 +99,7 @@ fn mihi_cpu_count(): i64 {
     sys_close(fd);
     if (n <= 0) { return 0 - 1; }
     return mihi_parse_cpu_range(&buf, n);
+    #endif
 }
 
 # ----- Slice B — /proc/cpuinfo model name ---------------------------
