@@ -4,7 +4,7 @@ version = "${file:VERSION}"
 description = "मिही / mihi — system-info probe library (CPU / RAM / GPU / kernel / uptime / distro / hostname). Substrate for iam, chakshu, and other tools that need 'tell me about this box'. Maori: the formal self-introduction ceremony."
 license = "GPL-3.0-only"
 language = "cyrius"
-cyrius = "6.2.22"
+cyrius = "6.2.37"
 
 [build]
 # In-tree smoke binary — exercises the lib API end-to-end. Consumers
@@ -22,12 +22,13 @@ output = "build/mihi-smoke"
 modules = ["src/types.cyr", "src/cpu.cyr", "src/mem.cyr", "src/kernel.cyr", "src/host.cyr", "src/gpu.cyr"]
 
 [deps]
-# agnosys (kernel-interface lib) wraps uname / sysinfo with Result-based error
-# handling; mihi's identity probes (kernel_name / kernel_version / cpu_arch /
-# hostname) share one syscall through agnosys_uname. It is a proper git
-# DEPENDENCY (not a cyrius stdlib module — see [deps.agnosys] below), pinned at
-# 1.4.0 = the first release with the AGNOS build target (uname#34 / sysinfo#35).
-# This is why "agnosys" is no longer in the stdlib list. docs/adr/0001-shared-uts-buffer.md.
+# mihi's identity probes (kernel_name / kernel_version / cpu_arch / hostname)
+# share one uname#34 + sysinfo#35 through the cyrius stdlib `sys` module
+# (lib/sys.cyr — the uname/sysinfo plumbing carved off agnosys at cyrius 6.1.28,
+# with per-target UTS_*/SI_* offsets for both Linux and AGNOS). Rewired off the
+# old [deps.agnosys] git dep (agnosys_uname / query_sysinfo) to sys_uname /
+# sys_sysinfo at 2026-06-22, after cyrius retired the stale stdlib agnosys
+# snapshot at 6.2.37. docs/adr/0001-shared-uts-buffer.md.
 #
 # Bundle-driven additions (for ai-hwaccel 2.2.5):
 #   fs, tagged, process, fnptr, thread, freelist, hashmap — referenced
@@ -42,15 +43,7 @@ modules = ["src/types.cyr", "src/cpu.cyr", "src/mem.cyr", "src/kernel.cyr", "src
 # sandhi pattern. So `json` → `bayan` in this list. mihi calls no json
 # directly — the `registry_to_json` symbols inside dist/ai-hwaccel.cyr
 # resolve through bayan's back-compat aliases.
-stdlib = ["string", "fmt", "alloc", "io", "vec", "str", "slice", "syscalls", "assert", "fs", "tagged", "process", "fnptr", "thread", "freelist", "hashmap", "ct", "bayan", "bench"]
-
-# agnosys: kernel-interface lib. mihi pulls only the AGNOS-portable `core`
-# bundle (1.4.0+ builds under both Linux and `cyrius build --agnos`); the
-# security/storage/trust/system profiles are Linux-only (Landlock/LUKS/TPM).
-[deps.agnosys]
-git = "https://github.com/MacCracken/agnosys.git"
-tag = "1.4.0"
-modules = ["dist/agnosys-core.cyr"]
+stdlib = ["string", "fmt", "alloc", "io", "vec", "str", "slice", "syscalls", "sys", "assert", "fs", "tagged", "process", "fnptr", "thread", "freelist", "hashmap", "ct", "bayan", "bench"]
 
 # ai-hwaccel: hardware-accelerator detection. mihi pins 2.2.5 — the
 # first release with the no-exec contract (registry_detect_no_exec()

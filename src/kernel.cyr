@@ -3,7 +3,7 @@
 # Linux source of truth: uname(2) — see man 2 uname / asm-generic/utsname.h.
 # The kernel writes a 390-byte struct utsname split into six 65-byte
 # null-terminated fields. We need sysname (offset 0) and release
-# (offset 130). agnosys.cyr wraps the syscall with Result handling; we
+# (offset 130). lib/sys.cyr provides the raw uname syscall; we
 # layer field-accessors named after the mihi probe surface on top.
 #
 # AGNOS-native: kernel name + version come from the boot-info struct
@@ -18,12 +18,18 @@
 # current kernel's utsname struct. Returns Result: Ok(uts) or Err.
 # Source: uname(2) — Linux kernel arch/*/kernel/sys.c::sys_newuname.
 fn mihi_uname(uts): i64 {
-    return agnosys_uname(uts);
+    # sys_uname (lib/sys.cyr) returns raw 0 / -errno; wrap as Result for callers
+    # that check is_ok / is_err_result (iam). The UTS_* offsets resolve
+    # target-correct from sys.cyr — AGNOS: sysname@0 / nodename@16 / release@32 /
+    # machine@48 in the sovereign 64-byte struct; Linux: the 390-byte layout.
+    var rc = sys_uname(uts);
+    if (rc != 0) { return Err(rc); }
+    return Ok(uts);
 }
 
 # Return a pointer to the null-terminated sysname field within `uts`.
 # Caller must have already filled `uts` via mihi_uname.
-# Source: utsname.sysname (offset 0, see agnosys UTS_SYSNAME) —
+# Source: utsname.sysname (offset 0, see sys.cyr UTS_SYSNAME) —
 # kernel UTS namespace, written at boot. On Linux this is "Linux".
 # Returns cstring so println() dispatches to the string overload.
 fn mihi_kernel_name(uts): cstring {

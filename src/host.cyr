@@ -18,7 +18,7 @@
 #     in practice) so a 1 KiB scratch buffer is sufficient.
 #
 # AGNOS-native: hostname will come from the boot-info struct alongside
-# the other uname facts; uptime from a future agnosys clock primitive;
+# the other uname facts; uptime from a future native clock primitive;
 # distro is a Linux-userland concept (the file lives in initramfs/root)
 # and is not on the native code path.
 
@@ -26,7 +26,7 @@
 
 # Return a pointer to the null-terminated nodename field within `uts`.
 # Caller must have already filled `uts` via mihi_uname.
-# Source: utsname.nodename (offset 65, see agnosys UTS_NODENAME) —
+# Source: utsname.nodename (offset 65, see sys.cyr UTS_NODENAME) —
 # kernel UTS namespace, set by sethostname(2) at boot. On systems
 # without a hostname configured the kernel reports "(none)".
 # Returns cstring so println() dispatches to the string overload.
@@ -72,7 +72,7 @@ fn mihi_uptime_secs(buf, cap): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
     # AGNOS has no /proc/uptime — uptime comes from sysinfo#35 (SI_UPTIME, secs).
     var si[120];
-    if (is_ok(query_sysinfo(&si)) == 0) { return 0 - 1; }
+    if (sys_sysinfo(&si) != 0) { return 0 - 1; }
     return sysinfo_uptime(&si);
     #endif
     #ifndef CYRIUS_TARGET_AGNOS

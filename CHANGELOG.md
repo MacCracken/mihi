@@ -4,6 +4,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.1.3] — 2026-06-22
+
+### Changed
+
+- **Rewired off `agnosys` onto the native `sys` stdlib module.** The identity probes'
+  single `uname`#34 + `sysinfo`#35 path went through the `[deps.agnosys]` git dep
+  (`agnosys_uname` / `query_sysinfo`). cyrius retired the stale stdlib `agnosys`
+  snapshot at **6.2.37**, so this **drops the agnosys git dependency entirely** and
+  rewires to `lib/sys.cyr`'s `sys_uname` / `sys_sysinfo` (the same uname/sysinfo
+  plumbing carved off agnosys at cyrius 6.1.28, with per-target `UTS_*` / `SI_*`
+  offsets for Linux **and** AGNOS — agnos reads the sovereign 64-byte uname struct,
+  release@32). `mihi_uname` now wraps the raw `0/-errno` return as a `Result` so
+  consumers checking `is_err_result` (iam) are unaffected; **no probe-API change**.
+  cyrius pin `6.2.22` → `6.2.37`; `dist/mihi.cyr` regenerated; host + `--agnos`
+  builds verified. This is the mihi half of the agnosys-retirement consumer rewire —
+  chakshu can now drop its stdlib `"agnosys"` entry.
+
 ## [1.1.2] — 2026-06-19
 
 AGNOS build-target support for the probes. Probe API unchanged.

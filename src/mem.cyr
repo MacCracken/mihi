@@ -83,9 +83,9 @@ fn mihi_extract_meminfo_bytes(buf, len, field, field_len): i64 {
 fn mihi_mem_total(buf, cap): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
     # AGNOS has no /proc/meminfo — total RAM comes from sysinfo#35 (via
-    # agnosys query_sysinfo; SI_TOTALRAM is reported in bytes directly).
+    # sys_sysinfo; SI_TOTALRAM is reported in bytes directly).
     var si[120];
-    if (is_ok(query_sysinfo(&si)) == 0) { return 0 - 1; }
+    if (sys_sysinfo(&si) != 0) { return 0 - 1; }
     return sysinfo_total_memory(&si);
     #endif
     #ifndef CYRIUS_TARGET_AGNOS

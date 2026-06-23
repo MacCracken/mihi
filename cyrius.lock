@@ -1,3 +1,4 @@
+commit	b9af260480c9c8fcb5a958d3d4426fdd166efa5c	ai-hwaccel	https://github.com/MacCracken/ai-hwaccel.git	2.2.6
 d9f3b17ddbbe1bba48917c3a679807b01c39c4a1ce776efdbdfbb7a1680e86e4  lib/tagged.cyr
 c9d9bd6559c58dd633ea2c35f529596c8af5ef37d267f8684c22930aae06607f  lib/toml.cyr
 d499d5f4e7a99b752c5ea60d220c8c436f0c84c4468c5825feec1cd0c23a0cd9  lib/net.cyr

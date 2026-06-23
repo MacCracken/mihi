@@ -12,7 +12,7 @@
 
 # Return a pointer to the null-terminated machine field within `uts`.
 # Caller must have already filled `uts` via mihi_uname.
-# Source: utsname.machine (offset 260, see agnosys UTS_MACHINE) —
+# Source: utsname.machine (offset 260, see sys.cyr UTS_MACHINE) —
 # kernel arch identifier ("x86_64", "aarch64", etc.). On AGNOS-native
 # this will eventually come from the boot-info struct instead.
 # Returns cstring so println() dispatches to the string overload.
