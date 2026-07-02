@@ -4,6 +4,29 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.2.1] — 2026-07-02
+
+**Fix: the CPUID CPU-model path was compiled OUT on agnos in 1.2.0.** 1.2.0 added
+`mihi_cpu_model_cpuid` under `#ifdef CYRIUS_ARCH_X86`, but `cyrius build --agnos` does
+**not** predefine `CYRIUS_ARCH_X86` (only a native x86 build does) — so the `cpuid` asm
+was stripped from the agnos build and `iam` still rendered `CPU: (unknown)`. Verified
+in QEMU (agnos, KVM): iam now prints the real brand (`AMD Ryzen 7 5800H …`).
+
+### Changed
+
+- **`src/cpu.cyr`: `#define CYRIUS_ARCH_X86` when `CYRIUS_TARGET_AGNOS` is set** — agnos
+  *is* x86, so map it, and the existing `#ifdef CYRIUS_ARCH_X86` brand-string asm now
+  compiles into the agnos build (0 → 3 `cpuid` instructions in the agnos binary). A
+  future aarch64-agnos would set `CYRIUS_ARCH_AARCH64` and skip this.
+- **`mihi_cpu_brand_fill` uses `param_load(rdi, 0)`** (sigil `_sha_ni_cpuid_probe` idiom)
+  to load the buffer param — prologue-drift-proof, vs the 1.2.0 hand-assumption that
+  `buf` stayed in `rdi`. (Belt-and-suspenders; the real 1.2.0 agnos miss was the guard.)
+
+### Verified
+
+- Native Linux test suite green (CPUID-brand-vs-/proc prefix check). **agnos (QEMU/KVM):**
+  `iam` renders the full card with the real CPU brand — `scripts/iam-agnos-verify.py` PASS.
+
 ## [1.2.0] — 2026-07-02
 
 **CPU probe made sovereign on AGNOS.** `iam` rendered `CPU: (unknown)` on agnos because
