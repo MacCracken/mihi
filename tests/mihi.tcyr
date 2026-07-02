@@ -119,6 +119,32 @@ fn main() {
     var live_ncpu: i64 = mihi_cpu_count();
     assert(live_ncpu >= 1, "at least one logical CPU online");
 
+    # ----- cpu.cyr — mihi_cpu_model_cpuid vs /proc (x86 host) --------
+    # The sovereign CPUID brand path (used on AGNOS, where /proc is absent) must
+    # produce the SAME datum Linux's /proc/cpuinfo "model name" derives from.
+    # Validated HERE on the x86 Linux host — identical CPUID instruction on both
+    # targets — so the hand-asm is proven before it ever ships to agnos.
+    test_group("cpu.cyr — mihi_cpu_model_cpuid matches /proc (x86 host)");
+    var cbuf[64];
+    var brand = mihi_cpu_model_cpuid(&cbuf, 64);
+    assert(brand != 0, "CPUID brand string returned (x86)");
+    assert(load8(brand) != 0, "CPUID brand is non-empty");
+    # /proc reference (Linux build → mihi_cpu_model reads /proc/cpuinfo). Separate
+    # buffer since the parser NUL-mutates it.
+    var pbuf[8192];
+    var pmodel = mihi_cpu_model(&pbuf, 8192);
+    assert(pmodel != 0, "/proc model name found (reference)");
+    # brand is trailing-trimmed; /proc's value may keep trailing spaces, so assert
+    # brand is a PREFIX of the /proc model line (robust to trailing-space diff).
+    var k = 0;
+    var pref_ok = 1;
+    while (load8(brand + k) != 0 && pref_ok == 1) {
+        if (load8(brand + k) != load8(pmodel + k)) { pref_ok = 0; }
+        k = k + 1;
+    }
+    assert_eq(pref_ok, 1, "CPUID brand is a prefix of /proc model name");
+    assert(k > 4, "CPUID brand is a plausible length (>4 chars)");
+
     # ----- cpu.cyr — mihi_parse_cpu_model ---------------------------
     # Synthetic cpuinfo. Layout matches real /proc/cpuinfo: first line
     # is "processor\t: 0\n", second is "model name\t: <brand>\n". The

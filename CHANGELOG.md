@@ -4,6 +4,40 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-07-02
+
+**CPU probe made sovereign on AGNOS.** `iam` rendered `CPU: (unknown)` on agnos because
+`mihi_cpu_model` read `/proc/cpuinfo`, which agnos has no procfs for. The CPU *brand* is
+the same datum `/proc/cpuinfo`'s "model name" is printed from — CPUID leaves
+0x80000002/3/4 — so this reads it straight from the instruction, which works bare-metal on
+any x86 target. (The uname-backed probes — arch / kernel / hostname — were already
+agnos-correct via cyrius's per-target `UTS_*` offsets, `sys.cyr` 6.1.28+; no change there.)
+
+### Added
+
+- **`mihi_cpu_model_cpuid(buf, cap)` + `mihi_cpu_brand_fill(buf)`** (`src/cpu.cyr`): read the
+  48-byte CPUID processor brand string (leaves 0x80000002/3/4, EAX/EBX/ECX/EDX each) and
+  trim it (AMD NUL-pads / Intel space-pads, plus Intel's leading-space left-pad). The fill
+  is a hand-asm block whose first statement keeps arg1 (`buf`) live in `rdi` — `cpuid`
+  clobbers rax/rbx/rcx/rdx (rbx push/pop'd per leaf) but not rdi. x86-only (`CYRIUS_ARCH_X86`).
+
+### Changed
+
+- **`mihi_cpu_model`** now dispatches: **AGNOS → CPUID brand** (no `/proc`), **Linux → `/proc/cpuinfo`**
+  (unchanged). Same `(buf, cap) → cstring` API — consumers (iam, chakshu) are unaffected.
+- **`mihi_cpu_count`** on AGNOS: was a hardcoded `return 1` (stale — the `smp_wake_enabled=0`
+  single-core gate was lifted; the kernel wakes APs, iron-confirmed `cpus online: 4` on
+  archaemenid). Now reads the kernel's enumerated count from `sysinfo`#35 (§4.4 `cpus` field,
+  `SI_CPUS`). Linux path (`/sys/devices/system/cpu/online`) unchanged.
+
+### Verified
+
+- **CPUID hand-asm validated on the x86 Linux host** (the whole point of doing it CPUID-side):
+  new test `mihi_cpu_model_cpuid matches /proc (x86 host)` asserts the brand string is a
+  prefix of `/proc/cpuinfo`'s "model name" — **113 passed, 0 failed**. Smoke prints the real
+  brand (`AMD Ryzen 7 5800H with Radeon Graphics`). The identical CPUID instruction on agnos
+  makes this the pre-iron proof; iam-on-agnos is the runtime confirmation (next burn).
+
 ## [1.1.3] — 2026-06-22
 
 ### Changed
