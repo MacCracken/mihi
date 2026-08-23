@@ -19,8 +19,14 @@ it, so mihi stops writing `detect: profiles=N` to a consumer's stderr.
 Ten stale vendored modules pruned from `lib/` (`agnosys` ×2, the six
 bayan-absorbed data-format modules, `linalg` / `matrix`). New
 `dist/mihi.deps` sidecar checked in and CI-gated. Probe API unchanged.
+CI reworked in the same cut: the toolchain now comes from the upstream
+installer (the hand-rolled tarball copy could fail silently and skipped
+signature verification), plus two new gates — `cyrius deps --verify`
+against the 109-entry lock, and a `cyrius fmt --check` sweep over every
+hand-written source, with `tests/mihi.tcyr` reformatted to match.
 Verified green: 116/116 tests, clean smoke with empty stderr, `--agnos`
-cross-build compiles with the CPUID path intact.
+cross-build compiles with the CPUID path intact, whole workflow replayed
+locally step-by-step.
 
 **1.2.1** — released 2026-07-02. Fix cut: the CPUID CPU-model path was
 compiled **out** on agnos in 1.2.0, because `cyrius build --agnos` does

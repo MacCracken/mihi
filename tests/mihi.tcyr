@@ -33,7 +33,7 @@ fn main() {
     test_group("kernel.cyr — mihi_kernel_name field accessor");
     var name_ptr = mihi_kernel_name(&uts);
     assert_eq(load8(name_ptr), load8(&uts + UTS_SYSNAME),
-              "mihi_kernel_name points at uts.sysname");
+      "mihi_kernel_name points at uts.sysname");
 
     # ----- mihi_kernel_name — error path / synthetic buffer ----------
     # Field accessor is pure pointer math — it doesn't validate that
@@ -52,7 +52,7 @@ fn main() {
     test_group("kernel.cyr — mihi_kernel_version field accessor");
     var rel_ptr = mihi_kernel_version(&uts);
     assert_eq(load8(rel_ptr), load8(&uts + UTS_RELEASE),
-              "mihi_kernel_version points at uts.release");
+      "mihi_kernel_version points at uts.release");
     # Release is non-empty on a real kernel.
     assert(load8(rel_ptr) != 0, "release[0] is non-null on linux");
 
@@ -60,7 +60,7 @@ fn main() {
     test_group("cpu.cyr — mihi_cpu_arch field accessor");
     var arch_ptr = mihi_cpu_arch(&uts);
     assert_eq(load8(arch_ptr), load8(&uts + UTS_MACHINE),
-              "mihi_cpu_arch points at uts.machine");
+      "mihi_cpu_arch points at uts.machine");
     # Arch is non-empty on a real kernel.
     assert(load8(arch_ptr) != 0, "machine[0] is non-null on linux");
 
@@ -299,7 +299,7 @@ fn main() {
         u1_i = u1_i + 1;
     }
     assert_eq(mihi_parse_uptime_secs(&u1_buf, u1_len), 12345,
-              "'12345.67 …' → 12345 secs (fractional dropped)");
+      "'12345.67 …' → 12345 secs (fractional dropped)");
 
     # "0.50 0.10\n" → 0 (valid; box just booted)
     var u2 = "0.50 0.10\n";
@@ -311,12 +311,12 @@ fn main() {
         u2_i = u2_i + 1;
     }
     assert_eq(mihi_parse_uptime_secs(&u2_buf, u2_len), 0,
-              "'0.50 …' → 0 secs (freshly booted)");
+      "'0.50 …' → 0 secs (freshly booted)");
 
     # Empty buffer → -1
     var u3[4];
     assert_eq(mihi_parse_uptime_secs(&u3, 0), 0 - 1,
-              "empty buffer → -1");
+      "empty buffer → -1");
 
     # Leading non-digit → -1
     var u4 = "abc";
@@ -325,7 +325,7 @@ fn main() {
     store8(&u4_buf + 1, load8(u4 + 1));
     store8(&u4_buf + 2, load8(u4 + 2));
     assert_eq(mihi_parse_uptime_secs(&u4_buf, 3), 0 - 1,
-              "leading non-digit → -1");
+      "leading non-digit → -1");
 
     # ----- host.cyr — mihi_uptime_secs real /proc/uptime ------------
     test_group("host.cyr — mihi_uptime_secs real /proc/uptime");
@@ -554,7 +554,7 @@ fn main() {
 
     var ci_empty[4];
     assert_eq(mihi_parse_cpu_model(&ci_empty, 0), 0,
-              "empty cpuinfo buffer -> null");
+      "empty cpuinfo buffer -> null");
 
     # Value runs to EOF without trailing '\n' (parser returns 0 per
     # cpu.cyr:124).
@@ -567,14 +567,14 @@ fn main() {
         ci_eof_i = ci_eof_i + 1;
     }
     assert_eq(mihi_parse_cpu_model(&ci_eof_buf, ci_eof_len), 0,
-              "value runs to EOF without newline -> null");
+      "value runs to EOF without newline -> null");
 
     # ----- mem.cyr — mihi_find_meminfo_field degenerate buffers -----
     test_group("mem.cyr — find_meminfo_field degenerate");
 
     var mi_empty[4];
     assert_eq(mihi_find_meminfo_field(&mi_empty, 0, "MemTotal:", 9),
-              0 - 1, "empty buffer -> -1");
+      0 - 1, "empty buffer -> -1");
 
     var mi_short = "Mem";
     var mi_short_buf[4];
@@ -582,20 +582,20 @@ fn main() {
     store8(&mi_short_buf + 1, load8(mi_short + 1));
     store8(&mi_short_buf + 2, load8(mi_short + 2));
     assert_eq(mihi_find_meminfo_field(&mi_short_buf, 3, "MemTotal:", 9),
-              0 - 1, "key longer than buffer -> -1");
+      0 - 1, "key longer than buffer -> -1");
 
     # ----- mem.cyr — mihi_parse_meminfo_kb degenerate ---------------
     test_group("mem.cyr — parse_meminfo_kb degenerate");
 
     var mi3[8];
     assert_eq(mihi_parse_meminfo_kb(&mi3, 0, 5), 0 - 1,
-              "start past end -> -1");
+      "start past end -> -1");
 
     var mi_ws_buf[8];
     store8(&mi_ws_buf + 0, 32); store8(&mi_ws_buf + 1, 32);
     store8(&mi_ws_buf + 2, 32);
     assert_eq(mihi_parse_meminfo_kb(&mi_ws_buf, 3, 0), 0 - 1,
-              "whitespace-then-EOF -> -1");
+      "whitespace-then-EOF -> -1");
 
     var mi_big = "MemTotal:\t67108864 kB\n";
     var mi_big_buf[32];
@@ -607,7 +607,7 @@ fn main() {
     }
     var mi_big_pos: i64 = mihi_find_meminfo_field(&mi_big_buf, mi_big_len, "MemTotal:", 9);
     assert_eq(mihi_parse_meminfo_kb(&mi_big_buf, mi_big_len, mi_big_pos),
-              67108864, "64 GiB value parses without overflow");
+      67108864, "64 GiB value parses without overflow");
 
     # ----- host.cyr — mihi_parse_uptime_secs extra shapes -----------
     test_group("host.cyr — parse_uptime_secs extras");
@@ -621,31 +621,31 @@ fn main() {
         u5_i = u5_i + 1;
     }
     assert_eq(mihi_parse_uptime_secs(&u5_buf, u5_len), 31536000,
-              "1-year uptime parses (year in seconds)");
+      "1-year uptime parses (year in seconds)");
 
     var u6[4];
     store8(&u6 + 0, 32); store8(&u6 + 1, 32);
     assert_eq(mihi_parse_uptime_secs(&u6, 2), 0 - 1,
-              "whitespace-only -> -1");
+      "whitespace-only -> -1");
 
     var u7[4];
     store8(&u7 + 0, 53); store8(&u7 + 1, 53);
     assert_eq(mihi_parse_uptime_secs(&u7, 2), 55,
-              "bare '55' (no separator) -> 55");
+      "bare '55' (no separator) -> 55");
 
     # ----- host.cyr — find_osrelease_key degenerate -----------------
     test_group("host.cyr — find_osrelease_key degenerate");
 
     var or_empty[4];
     assert_eq(mihi_find_osrelease_key(&or_empty, 0, "PRETTY_NAME=", 12),
-              0 - 1, "empty buffer -> -1");
+      0 - 1, "empty buffer -> -1");
 
     var or_short = "ID";
     var or_short_buf[4];
     store8(&or_short_buf + 0, load8(or_short + 0));
     store8(&or_short_buf + 1, load8(or_short + 1));
     assert_eq(mihi_find_osrelease_key(&or_short_buf, 2, "PRETTY_NAME=", 12),
-              0 - 1, "key longer than buffer -> -1");
+      0 - 1, "key longer than buffer -> -1");
 
     # ----- host.cyr — parse_osrelease_value degenerate --------------
     test_group("host.cyr — parse_osrelease_value degenerate");
@@ -723,7 +723,7 @@ fn main() {
     assert(first_ptr != 0, "cache populated after first call");
     mihi_gpu_count();
     assert_eq(_mihi_gpu_registry, first_ptr,
-              "second call reuses the same registry pointer");
+      "second call reuses the same registry pointer");
 
     # ====================================================================
     # 0.6.0 security audit — regression tests for C-1, M-1, C-2 fixes.
@@ -739,7 +739,7 @@ fn main() {
     store8(&ad1 + 2, 45);                          # "-"
     store8(&ad1 + 3, 53);                          # "5"
     assert_eq(mihi_parse_cpu_range(&ad1, 4), 1,
-              "'10-5' coerced to single CPU (hi=lo)");
+      "'10-5' coerced to single CPU (hi=lo)");
 
     # Mixed "0-3,10-5" → 4 + 1 = 5 (not 4 + -4 = 0)
     var ad2[16];
@@ -748,7 +748,7 @@ fn main() {
     store8(&ad2 + 4, 49); store8(&ad2 + 5, 48); store8(&ad2 + 6, 45);
     store8(&ad2 + 7, 53);
     assert_eq(mihi_parse_cpu_range(&ad2, 8), 5,
-              "'0-3,10-5' = 4 + 1 (descending coerced, not negative)");
+      "'0-3,10-5' = 4 + 1 (descending coerced, not negative)");
 
     # ----- audit M-1: meminfo_kb digit cap defends against overflow -
     # A 19-digit value is the i64 boundary; mihi caps at 18 to leave
@@ -769,7 +769,7 @@ fn main() {
     var mlong_pos: i64 = mihi_find_meminfo_field(&mlong_buf, mlong_len, "MemTotal:", 9);
     var mlong_kb: i64 = mihi_parse_meminfo_kb(&mlong_buf, mlong_len, mlong_pos);
     assert_eq(mlong_kb, 123456789012345678,
-              "19-digit value truncated to 18 digits (cap engaged)");
+      "19-digit value truncated to 18 digits (cap engaged)");
 
     # ----- audit C-2: uptime_secs same cap ---------------------------
     test_group("audit C-2 — uptime_secs caps digits");
@@ -783,8 +783,8 @@ fn main() {
         ulong_i = ulong_i + 1;
     }
     assert_eq(mihi_parse_uptime_secs(&ulong_buf, ulong_len),
-              123456789012345678,
-              "uptime 19-digit input capped at 18 digits");
+      123456789012345678,
+      "uptime 19-digit input capped at 18 digits");
 
     return assert_summary();
 }

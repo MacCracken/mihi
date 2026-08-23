@@ -55,9 +55,32 @@ must repin ai-hwaccel to 2.3.18 in lockstep and add `"sakshi"` to their `[deps] 
   and `linalg` / `matrix` (folded into `ganita`). Same class of orphan the 1.1.1 note
   flagged; `lib/` now matches the pinned snapshot exactly, 108 stdlib modules + the
   ai-hwaccel dep.
+- **`tests/mihi.tcyr` normalized to canonical cyrfmt layout.** Twenty-five continuation
+  lines used aligned-to-open-paren indentation; canonical style is 2 spaces per open
+  paren. Whitespace-only — `git diff -w` is empty, 116 passed / 0 failed before and
+  after, and `cyrius fmt` is idempotent on the result. The drift predated this cut; the
+  new gate above is what stops it recurring. No `[lib].modules` file was touched, so
+  `dist/` is unaffected.
 
 ### Added
 
+- **cyrfmt gate in `.github/workflows/ci.yml`** — every hand-written Cyrius source
+  (`src/*.cyr`, `programs/*.cyr`, `tests/*.tcyr`, `benches/*.bcyr`) is checked with
+  `cyrius fmt <file> --check`; drift fails the build. Sits next to the lint step, since
+  both are static checks. Mirrors the ai-hwaccel 2.3.18 gate with two deliberate
+  differences: the offending-line diagnostic is left on stdout rather than sent to
+  `/dev/null` (the line number is the actionable part), and the loop reports *every*
+  offender before exiting instead of stopping at the first. `dist/mihi.cyr` is
+  intentionally out of scope — it is `cyrius distlib` output, so its layout is the
+  generator's contract, already covered by the drift + determinism gates.
+- **`cyrius deps --verify` gate in CI.** mihi is unusual among the siblings in having a
+  real `cyrius.lock` (109 entries — the vendored stdlib snapshot plus the commit-pinned
+  ai-hwaccel dep) *and* a committed `lib/` rather than a gitignored one, so `--verify`
+  hashes what's checked in against what the lock claims. It catches a hand-edited
+  vendored file (which CLAUDE.md forbids) or a `lib/` snapshot that has drifted from the
+  pinned toolchain. For the same reason the workflow deliberately does **not** gain a
+  `cyrius lib sync` step: siblings that gitignore `lib/` need one, but here it would
+  overwrite 109 tracked files and mask the very drift this gate exists to surface.
 - **`dist/mihi.deps`** — the stdlib-leaf sidecar `cyrius distlib` emits alongside the
   bundle as of cyrius 6.5.x, listing the 21 stdlib modules mihi's fold needs in scope.
   Consumers' `cyrius deps` reads it, so it has to be checked in next to `dist/mihi.cyr`.
@@ -71,6 +94,17 @@ must repin ai-hwaccel to 2.3.18 in lockstep and add `"sakshi"` to their `[deps] 
 
 ### Fixed
 
+- **CI installed the toolchain by hand instead of using the upstream installer.** Both
+  workflows `curl`'d `cyrius-<v>-x86_64-linux.tar.gz` from the GitHub release and `cp`'d
+  it into `$HOME/.cyrius/{bin,lib}` — with `2>/dev/null || true` on every copy, so a
+  fetch failure or an upstream layout change left the step **green with nothing
+  installed**. It also produced a flat `lib/` with no `versions/<v>/` and no `current`,
+  which is the layout `cyrius lib sync` and the wrapper's own drift detector read, and it
+  skipped the installer's Ed25519 release-signature verification entirely. Both
+  `ci.yml` and `release.yml` now read the `[package].cyrius` pin (anchored `^cyrius = `,
+  so it can't match `language = "cyrius"`) and pipe it to
+  `cyrius/scripts/install.sh` — the same block patra and libro use. `set -e` plus an
+  empty-pin guard replace the swallowed errors.
 - **Stale CI comments** — the "Resolve dependencies" step still described mihi as pulling
   `agnosys` (dropped at 1.1.3; uname/sysinfo come from `lib/sys.cyr`), and the DCE parity
   step attributed its ~1600 unreachable fns to agnosys rather than the ai-hwaccel bundle.
@@ -89,9 +123,10 @@ must repin ai-hwaccel to 2.3.18 in lockstep and add `"sakshi"` to their `[deps] 
 - `cyrius deps` resolves (109 locked, ai-hwaccel commit-pinned at 2.3.18); build clean;
   smoke exits 0 **with empty stderr** (the regression this cut fixes); `--agnos`
   cross-build compiles, and the 1.2.1 CPUID brand path is still in the agnos binary
-  (`cpuid` instruction count matches the native build). Lint clean under the CI policy;
-  all three `benches/*.bcyr` compile; DCE parity holds; `cyrius distlib` byte-
-  deterministic across two runs. **`cyrius test tests/mihi.tcyr`: 116 passed, 0 failed.**
+  (`cpuid` instruction count matches the native build). Lint clean under the CI policy,
+  and the new fmt gate passes across all 13 hand-written sources; all three
+  `benches/*.bcyr` compile; DCE parity holds; `cyrius distlib` byte-deterministic across
+  two runs. **`cyrius test tests/mihi.tcyr`: 116 passed, 0 failed.**
 
 ## [1.2.1] — 2026-07-02
 
