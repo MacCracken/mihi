@@ -77,14 +77,23 @@ emits is hidden from mihi's count.
 
 | Probe                    | Source                                                  | Authority                                                                                                                 | Notes |
 | ------------------------ | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | ----- |
-| `mihi_gpu_count`         | `ai-hwaccel::registry_detect_no_exec()` profile vec     | ai-hwaccel 2.2.6 `src/registry.cyr` (no-exec orchestrator) + per-backend sysfs paths                                       | Excludes the synthetic CPU profile. Lazy: first call across any `mihi_gpu_*` runs detection. |
-| `mihi_gpu_name(idx)`     | `ai-hwaccel::profile_device_name(p)`                    | ai-hwaccel 2.2.6 `src/detect/{rocm,tpu,gaudi,neuron,intel,amd_xdna,edge,cloud_asic}.cyr` (each backend's name setter)        | ROCm prefers `/sys/class/drm/cardN/device/product_name`, falls back to a synthesized `AMD Radeon (PCI vendor:device)` string. Other safe backends hardcode vendor strings. Returns 0 on out-of-range idx. |
+| `mihi_gpu_count`         | `ai-hwaccel::registry_detect_no_exec()` profile vec     | ai-hwaccel 2.3.18 `src/registry.cyr` (no-exec orchestrator) + per-backend sysfs paths                                       | Excludes the synthetic CPU profile. Lazy: first call across any `mihi_gpu_*` runs detection. |
+| `mihi_gpu_name(idx)`     | `ai-hwaccel::profile_device_name(p)`                    | ai-hwaccel 2.3.18 `src/detect/{rocm,tpu,gaudi,neuron,intel,amd_xdna,edge,cloud_asic}.cyr` (each backend's name setter)        | ROCm prefers `/sys/class/drm/cardN/device/product_name`, falls back to a synthesized `AMD Radeon (PCI vendor:device)` string. Other safe backends hardcode vendor strings. Returns 0 on out-of-range idx. |
 | `mihi_gpu_memory_bytes(idx)` | `ai-hwaccel::profile_memory_bytes(p)`               | ROCm: `/sys/class/drm/cardN/device/mem_info_vram_total`; NPU/TPU backends: vendor-documented fixed sizes                   | Bytes (not MiB). Returns 0 - 1 on bad idx. |
 | `mihi_gpu_family(idx)`   | `ai-hwaccel::profile_family(p)`                         | `ai-hwaccel::accel_family(profile_accel_type(p))` mapping — pure function over the 18-variant `AcceleratorType` enum         | `FAMILY_GPU` / `FAMILY_NPU` / `FAMILY_TPU` / `FAMILY_AI_ASIC`. Returns 0 - 1 on bad idx. |
-| `mihi_gpu_type(idx)`     | `ai-hwaccel::profile_accel_type(p)`                     | per-backend `profile_new(ACCEL_*, ...)` at detection time                                                                  | One of the eight `ACCEL_*` values reachable under the no-exec mask: ROCM, INTEL_NPU, AMD_XDNA, TPU, QUALCOMM, GROQ, SAMSUNG_NPU, MEDIATEK_APU. Returns 0 - 1 on bad idx. |
+| `mihi_gpu_type(idx)`     | `ai-hwaccel::profile_accel_type(p)`                     | per-backend `profile_new(ACCEL_*, ...)` at detection time                                                                  | One of the eight `ACCEL_*` values a no-exec detector can actually produce: ROCM, INTEL_NPU, AMD_XDNA, TPU, QUALCOMM, GROQ, SAMSUNG_NPU, MEDIATEK_APU. (`ACCEL_AGNOS_GPU` is in the no-exec mask as of 2.3.x but has no detector wired upstream yet.) Returns 0 - 1 on bad idx. |
 
 The no-exec contract — that *none* of these probes spawn a
 subprocess, even transitively — is enforced by `ai-hwaccel`'s
 `builder_no_exec()` mask before any detector runs. See
 `ai-hwaccel::backend_uses_exec(b)` for the per-backend classifier
-(8 exec / 8 sysfs split as of ai-hwaccel 2.2.6).
+(9 exec / 9 no-exec split as of ai-hwaccel 2.3.18 — `BACKEND_WINDOWS`
+joined the exec set and `BACKEND_AGNOS_GPU` the no-exec one; the latter
+is reserved upstream with no detector dispatch, so nothing runs for it).
+
+One non-citation note, because it is easy to mistake for a probe
+behavior: since 1.2.2 `_mihi_gpu_ensure()` saves the caller's `sakshi`
+log level, clamps it to `SK_WARN` for the duration of the single
+`registry_detect_no_exec()` call, and restores it. ai-hwaccel 2.3.x
+logs its detect pass at `SK_INFO`, and a library has no business
+writing to a consumer's stderr. No probe *value* is affected.

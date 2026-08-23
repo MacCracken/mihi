@@ -73,10 +73,12 @@ buffers, no probe-internal allocation.
   the `registry_detect_no_exec()` entry point that masks off the
   eight subprocess-shelling backends (CUDA, Apple, Vulkan, Gaudi,
   Neuron, Intel oneAPI, Cerebras, Graphcore) and skips
-  `detect_interconnects`. Mihi pins `[deps.ai-hwaccel] tag = "2.2.6"`
-  (bumped from 2.2.5 in 0.4.1, see below) and calls only
-  `registry_detect_no_exec()` — the no-exec contract is enforced on
-  the ai-hwaccel side.
+  `detect_interconnects`. Mihi pinned `[deps.ai-hwaccel] tag = "2.2.6"`
+  at this milestone (bumped from 2.2.5 in 0.4.1, see below) and calls
+  only `registry_detect_no_exec()` — the no-exec contract is enforced
+  on the ai-hwaccel side. **Current pin: 2.3.18** (1.2.2); the exec set
+  is nine backends there, `BACKEND_WINDOWS` having joined it. See
+  [`state.md`](state.md) for the live pin.
 - ✅ **Safe backends mihi sees**: ROCm, Intel NPU, AMD XDNA, TPU,
   Qualcomm, Groq, Samsung NPU, MediaTek APU — plus the sysfs
   post-passes (`enrich_bandwidth/pcie/numa`, `detect_storage`,
@@ -232,18 +234,25 @@ Keeps future contributors from adding to v1.0 by accident.
 - **Caching layer** — every probe is a fresh read.
 - **Daemon mode** — mihi is a library, not a service.
 
-## Pending upstream — agnosys → agnodrm decomposition
+## Pending upstream
 
-- [ ] **Re-source `uname` off agnosys-core.** mihi uses `agnosys_uname` + the
-  `UTS_*` offsets (kernel release / hostname / machine), which lived in agnosys's
-  `syscall.cyr`. The agnosys → agnodrm decomposition (2026-06-19) removed that
-  syscall layer from agnodrm; its replacement is a cross-target uname/sysinfo
-  surface **filed as a cyrius request** (not yet landed). Until then mihi resolves
-  `agnosys_uname` via the agnosys → agnodrm GitHub redirect on the pinned `1.4.0`
-  tag (old content intact — **not broken**). **Unblocker:** cyrius adopts the
-  sysinfo/uname value-add → mihi sources `uname` from cyrius stdlib and drops
-  `[deps.agnosys]`. (A Linux uname wrapper could be inlined sooner for a clean
-  break, at the cost of temporary duplication.) Gates iam's matching drop.
+- [x] **Re-source `uname` off agnosys-core.** ✅ closed at **v1.1.3** (2026-06-22).
+  mihi used `agnosys_uname` + the `UTS_*` offsets (kernel release / hostname /
+  machine), which lived in agnosys's `syscall.cyr`; the agnosys → agnodrm
+  decomposition (2026-06-19) removed that syscall layer, leaving mihi resolving the
+  symbol through a GitHub redirect on the pinned `1.4.0` tag. The unblocker landed
+  as filed: cyrius carved the uname/sysinfo plumbing into the stdlib `sys` module
+  (6.1.28) with per-target `UTS_*` / `SI_*` offsets for Linux **and** AGNOS, and
+  retired the stale bundled agnosys snapshot at 6.2.37. mihi rewired to
+  `sys_uname` / `sys_sysinfo` and dropped `[deps.agnosys]` entirely; `mihi_uname`
+  wraps the raw `0/-errno` return as a `Result`, so `is_err_result` consumers were
+  unaffected. iam's matching drop unblocked at the same cut.
+- [ ] **`BACKEND_AGNOS_GPU` detector.** ai-hwaccel 2.3.x reserves the backend id and
+  an `ACCEL_AGNOS_GPU` accelerator type, and `builder_no_exec()` already sets its
+  bit — but upstream ships no detector dispatch for it, so it is inert. When one
+  lands, mihi's gpu probes should report accelerators on the sovereign target with
+  no mihi-side change; worth an agnos smoke pass at that point. **Unblocker:**
+  upstream ai-hwaccel.
 
 ## Cross-references
 

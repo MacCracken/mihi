@@ -109,7 +109,7 @@ jobs:
         run: |
           PKG="mihi-${VERSION}"
           mkdir -p "pkg/$PKG"
-          cp dist/mihi.cyr "pkg/$PKG/"
+          cp dist/mihi.cyr dist/mihi.deps "pkg/$PKG/"
           cp README.md LICENSE CHANGELOG.md VERSION cyrius.cyml "pkg/$PKG/"
           mkdir -p out
           tar czf "out/${PKG}.tar.gz" -C pkg "$PKG"

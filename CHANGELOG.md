@@ -4,6 +4,95 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.2.2] — 2026-08-23
+
+Toolchain / dependency maintenance cut. Cyrius pin **6.2.37 → 6.5.35**, ai-hwaccel
+**2.2.6 → 2.3.18**. Probe API unchanged (frozen since 1.0.0) — but the ai-hwaccel jump
+crosses two of its deliberate symbol renames and introduces a `sakshi` logging
+dependency, so this cut is not purely mechanical. Consumers repinning to mihi 1.2.2
+must repin ai-hwaccel to 2.3.18 in lockstep and add `"sakshi"` to their `[deps] stdlib`
+(the new `dist/mihi.deps` sidecar declares it for them).
+
+### Changed
+
+- **`cyrius.cyml`: pin `6.2.37` → `6.5.35`** — closes the wrapper/manifest drift
+  (installed toolchain was already 6.5.35; `cyrius --version` had been reporting it).
+  `cyrius lib sync --full` re-vendored the version-matched snapshot into `lib/`: **108
+  `.cyr` files**, of which 7 are the new `lib/unicode/` sub-package (`casefold` /
+  `categories` / `normalize` + their data folds). Also new to mihi's `lib/` since the
+  6.2.22-era snapshot it was carrying: `async_macos`, `async_win`, `thread_macos`,
+  `yantra`. mihi links none of them directly; DCE drops them from the binary.
+- **`cyrius.cyml`: `[deps.ai-hwaccel] tag = "2.2.6"` → `"2.3.18"`.** Twelve upstream
+  releases, three of them ecosystem-wide symbol de-collisions: 2.3.13 (`ERR_*` →
+  `HWA_ERR_*`), 2.3.14 (`registry_new` → `hw_registry_new`, clearing a real collision
+  with bote-core's 24-byte tool registry), and 2.3.18 (`BACKEND_COUNT` →
+  `AIHW_BACKEND_COUNT`, `enum Backend` → `AiHwBackend`, `path_exists` →
+  `aihw_path_exists`, clearing a bounds-check collision with kavach). Only 2.3.14's
+  reaches mihi — and only the test suite, not the probe source (see below); mihi
+  references no ai-hwaccel error constants and no backend enum members.
+- **`cyrius.cyml`: `sakshi` added to `[deps] stdlib`.** ai-hwaccel 2.3.x routes its
+  detect-path diagnostics through `sakshi`; the bundle is one concatenation, so the
+  parser needs the module in scope even though mihi calls no logging of its own.
+- **`src/gpu.cyr`: `_mihi_gpu_ensure()` clamps the log level across detection.**
+  `sakshi`'s default level is `SK_INFO`, so a bare `registry_detect_no_exec()` writes
+  `detect: profiles=N` to **the consumer's stderr** — a library scribbling on a caller's
+  terminal, and for `iam` / `chakshu` that means a corrupted card/TUI frame. ai-hwaccel's
+  own programs avoid this by calling `hwlog_init()` (which sets `SK_WARN`); mihi can't,
+  because permanently resetting a level the consumer chose is just as rude. So mihi saves
+  the caller's level, clamps to `SK_WARN` for the one detect call, and restores. Process-
+  local state, saved and put back — the "probes are pure reads" rule (no file/system
+  mutation, no subprocess) is untouched.
+- **`tests/mihi.tcyr`: `registry_new()` → `hw_registry_new()`** at the four synthetic-
+  registry construction sites. Without this the suite failed to compile against 2.3.18
+  (`error: refusing to emit binary with 1 reachable undefined function(s)`) — upstream
+  deliberately kept no back-compat alias, since an alias by that name would reintroduce
+  the collision it was renamed to remove.
+- **Stale vendored modules pruned from `lib/`** — ten files absent from the 6.5.35
+  snapshot and undeclared in `[deps] stdlib`: `agnosys.cyr` + `agnosys-core.cyr` (the
+  stdlib snapshot cyrius retired at 6.2.37; mihi rewired off the dep at 1.1.3),
+  `base64` / `bigint` / `csv` / `cyml` / `toml` / `u128` (folded into the `bayan`
+  distribution in the 6.2.x reorg — the same prune 1.1.1 did for `json`, finished here),
+  and `linalg` / `matrix` (folded into `ganita`). Same class of orphan the 1.1.1 note
+  flagged; `lib/` now matches the pinned snapshot exactly, 108 stdlib modules + the
+  ai-hwaccel dep.
+
+### Added
+
+- **`dist/mihi.deps`** — the stdlib-leaf sidecar `cyrius distlib` emits alongside the
+  bundle as of cyrius 6.5.x, listing the 21 stdlib modules mihi's fold needs in scope.
+  Consumers' `cyrius deps` reads it, so it has to be checked in next to `dist/mihi.cyr`.
+  Wired into all three places the bundle already was: the CI drift check (a stale sidecar
+  breaks consumers exactly the way a stale bundle does), the required-files gate, and the
+  release tarball.
+- **Test group `gpu.cyr — detect restores the caller's sakshi level`** (3 assertions).
+  Asserts both halves of the clamp: a verbose caller (`SK_DEBUG`) gets its level back
+  after a cold detect, and an already-quiet caller (`SK_ERROR`) is never raised. **113 →
+  116 assertions.**
+
+### Fixed
+
+- **Stale CI comments** — the "Resolve dependencies" step still described mihi as pulling
+  `agnosys` (dropped at 1.1.3; uname/sysinfo come from `lib/sys.cyr`), and the DCE parity
+  step attributed its ~1600 unreachable fns to agnosys rather than the ai-hwaccel bundle.
+- **Stale doc references** — `docs/sources.md` cited ai-hwaccel 2.2.6 and an "8 exec / 8
+  sysfs" backend split; 2.3.18 has 18 backends, 9 exec / 9 no-exec (`BACKEND_WINDOWS`
+  joined the exec set, `BACKEND_AGNOS_GPU` the no-exec one — the latter is reserved
+  upstream with **no detector dispatch wired yet**, so mihi's behavior is unchanged).
+  `README.md`'s Status section still read "Pre-1.0 scaffold (0.1.0) … bodies return 0.
+  Not yet usable" — three minor versions past the API freeze.
+  `docs/development/state.md` was stranded at 1.1.1 and is refreshed through 1.2.2;
+  `roadmap.md`'s "Pending upstream — agnosys → agnodrm" item closed at 1.1.3 but was
+  never checked off.
+
+### Verified
+
+- `cyrius deps` resolves (109 locked, ai-hwaccel commit-pinned at 2.3.18); build clean;
+  smoke exits 0 **with empty stderr** (the regression this cut fixes); `--agnos`
+  cross-build compiles, and the 1.2.1 CPUID brand path is still in the agnos binary
+  (`cpuid` instruction count matches the native build). Lint clean under the CI policy;
+  all three `benches/*.bcyr` compile; DCE parity holds; `cyrius distlib` byte-
+  deterministic across two runs. **`cyrius test tests/mihi.tcyr`: 116 passed, 0 failed.**
+
 ## [1.2.1] — 2026-07-02
 
 **Fix: the CPUID CPU-model path was compiled OUT on agnos in 1.2.0.** 1.2.0 added
