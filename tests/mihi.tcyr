@@ -454,7 +454,7 @@ fn main() {
     # module-level singleton _mihi_gpu_registry directly so we don't
     # have to first run real detection.
     test_group("gpu.cyr — CPU-only registry shows zero accelerators");
-    _mihi_gpu_registry = registry_new();
+    _mihi_gpu_registry = hw_registry_new();
     reg_add_profile(_mihi_gpu_registry, profile_cpu(8 * 1073741824));
     var n_cpu_only: i64 = mihi_gpu_count();
     assert_eq(n_cpu_only, 0, "CPU profile excluded from gpu count");
@@ -467,7 +467,7 @@ fn main() {
     # CPU + ROCm. mihi_gpu_count must return 1 (CPU hidden, ROCm at
     # idx 0). All four per-idx accessors should resolve.
     test_group("gpu.cyr — CPU + one ROCm GPU");
-    _mihi_gpu_registry = registry_new();
+    _mihi_gpu_registry = hw_registry_new();
     reg_add_profile(_mihi_gpu_registry, profile_cpu(16 * 1073741824));
     var rocm_p = profile_new(ACCEL_ROCM, 0, 4 * 1073741824);
     profile_set_device_name(rocm_p, "Synthetic Radeon");
@@ -499,6 +499,26 @@ fn main() {
     _mihi_gpu_registry = 0;
     var n_live: i64 = mihi_gpu_count();
     assert(n_live >= 0, "live gpu count is non-negative");
+
+    # ----- gpu.cyr — detect leaves the caller's log level alone ------
+    # ai-hwaccel 2.3.x routes its detect pass through sakshi, whose
+    # default level is SK_INFO — a bare registry_detect_no_exec() writes
+    # "detect: profiles=N" to stderr. _mihi_gpu_ensure() clamps to
+    # SK_WARN across that one call so a mihi consumer never inherits the
+    # noise, then restores. Both halves asserted: a verbose caller gets
+    # its level back, and an already-quiet caller is never raised.
+    test_group("gpu.cyr — detect restores the caller's sakshi level");
+    sakshi_set_level(SK_DEBUG);
+    _mihi_gpu_registry = 0;
+    var n_lvl: i64 = mihi_gpu_count();
+    assert(n_lvl >= 0, "count still valid under a verbose caller");
+    assert_eq(sakshi_get_level(), SK_DEBUG, "verbose level restored after detect");
+
+    sakshi_set_level(SK_ERROR);
+    _mihi_gpu_registry = 0;
+    n_lvl = mihi_gpu_count();
+    assert_eq(sakshi_get_level(), SK_ERROR, "quiet level not raised by detect");
+    sakshi_set_level(SK_INFO);
 
     # ====================================================================
     # v1.0 hardening — error-path coverage for shipped probes (75 → 100+).
@@ -657,7 +677,7 @@ fn main() {
     # ----- gpu.cyr — multi-accelerator synthetic registry -----------
     test_group("gpu.cyr — multi-accelerator registry");
 
-    _mihi_gpu_registry = registry_new();
+    _mihi_gpu_registry = hw_registry_new();
     reg_add_profile(_mihi_gpu_registry, profile_cpu(16 * 1073741824));
     var ga = profile_new(ACCEL_ROCM, 0, 4 * 1073741824);
     profile_set_device_name(ga, "GPU A");
@@ -675,7 +695,7 @@ fn main() {
     # ----- gpu.cyr — mixed family types -----------------------------
     test_group("gpu.cyr — mixed family types");
 
-    _mihi_gpu_registry = registry_new();
+    _mihi_gpu_registry = hw_registry_new();
     reg_add_profile(_mihi_gpu_registry, profile_cpu(8 * 1073741824));
     var gx_rocm = profile_new(ACCEL_ROCM, 0, 4 * 1073741824);
     profile_set_device_name(gx_rocm, "rocm");

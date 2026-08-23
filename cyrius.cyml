@@ -4,7 +4,7 @@ version = "${file:VERSION}"
 description = "मिही / mihi — system-info probe library (CPU / RAM / GPU / kernel / uptime / distro / hostname). Substrate for iam, chakshu, and other tools that need 'tell me about this box'. Maori: the formal self-introduction ceremony."
 license = "GPL-3.0-only"
 language = "cyrius"
-cyrius = "6.2.37"
+cyrius = "6.5.35"
 
 [build]
 # In-tree smoke binary — exercises the lib API end-to-end. Consumers
@@ -43,7 +43,7 @@ modules = ["src/types.cyr", "src/cpu.cyr", "src/mem.cyr", "src/kernel.cyr", "src
 # sandhi pattern. So `json` → `bayan` in this list. mihi calls no json
 # directly — the `registry_to_json` symbols inside dist/ai-hwaccel.cyr
 # resolve through bayan's back-compat aliases.
-stdlib = ["string", "fmt", "alloc", "io", "vec", "str", "slice", "syscalls", "sys", "assert", "fs", "tagged", "process", "fnptr", "thread", "freelist", "hashmap", "ct", "bayan", "bench"]
+stdlib = ["string", "fmt", "alloc", "io", "vec", "str", "slice", "syscalls", "sys", "assert", "fs", "tagged", "process", "fnptr", "thread", "freelist", "hashmap", "sakshi", "ct", "bayan", "bench"]
 
 # ai-hwaccel: hardware-accelerator detection. mihi pins 2.2.5 — the
 # first release with the no-exec contract (registry_detect_no_exec()
@@ -51,5 +51,5 @@ stdlib = ["string", "fmt", "alloc", "io", "vec", "str", "slice", "syscalls", "sy
 # no-exec API; see docs/development/roadmap.md.
 [deps.ai-hwaccel]
 git = "https://github.com/MacCracken/ai-hwaccel.git"
-tag = "2.2.6"
+tag = "2.3.18"
 modules = ["dist/ai-hwaccel.cyr"]
