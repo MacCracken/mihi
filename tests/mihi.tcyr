@@ -124,6 +124,7 @@ fn main() {
     # produce the SAME datum Linux's /proc/cpuinfo "model name" derives from.
     # Validated HERE on the x86 Linux host — identical CPUID instruction on both
     # targets — so the hand-asm is proven before it ever ships to agnos.
+    #ifndef CYRIUS_ARCH_AARCH64
     test_group("cpu.cyr — mihi_cpu_model_cpuid matches /proc (x86 host)");
     var cbuf[64];
     var brand = mihi_cpu_model_cpuid(&cbuf, 64);
@@ -144,6 +145,7 @@ fn main() {
     }
     assert_eq(pref_ok, 1, "CPUID brand is a prefix of /proc model name");
     assert(k > 4, "CPUID brand is a plausible length (>4 chars)");
+    #endif
 
     # ----- cpu.cyr — mihi_parse_cpu_model ---------------------------
     # Synthetic cpuinfo. Layout matches real /proc/cpuinfo: first line
@@ -192,11 +194,97 @@ fn main() {
     assert_eq(model3, 0, "file-start 'model name' rejected (line-anchored)");
 
     # ----- cpu.cyr — mihi_cpu_model happy path ----------------------
-    test_group("cpu.cyr — mihi_cpu_model real /proc/cpuinfo");
+    # Arch-neutral: mihi_cpu_model dispatches per target (x86 Linux →
+    # /proc/cpuinfo, aarch64 Linux → device tree, AGNOS → CPUID), so
+    # this asserts the contract rather than the source.
+    test_group("cpu.cyr — mihi_cpu_model live, whichever source");
     var live_buf[8192];
     var live_model = mihi_cpu_model(&live_buf, 8192);
-    assert(live_model != 0, "live /proc/cpuinfo yields a model");
+    assert(live_model != 0, "live probe yields a model");
     assert(strlen(live_model) > 0, "live model string is non-empty");
+
+    # ----- cpu.cyr — mihi_parse_dt_string (arch-independent) --------
+    # A device-tree property blob IS the value and carries its own NUL;
+    # `compatible` may hold a NUL-separated list, most specific first.
+    test_group("cpu.cyr — mihi_parse_dt_string blob shapes");
+
+    var dt1[32];
+    var dt1s = "arm,cortex-a72";
+    var dt1n: i64 = strlen(dt1s);
+    var dt1i = 0;
+    while (dt1i < dt1n) {
+        store8(&dt1 + dt1i, load8(dt1s + dt1i));
+        dt1i = dt1i + 1;
+    }
+    store8(&dt1 + dt1n, 0);
+    var dt1v = mihi_parse_dt_string(&dt1, dt1n + 1);
+    assert(dt1v != 0, "terminated blob parses");
+    assert_eq(streq(dt1v, "arm,cortex-a72"), 1, "value is the whole property");
+
+    # Two-entry list: the first (most specific) entry is the answer.
+    var dt2[48];
+    var dt2a = "raspberrypi,4-model-b";
+    var dt2b = "brcm,bcm2711";
+    var dt2an: i64 = strlen(dt2a);
+    var dt2bn: i64 = strlen(dt2b);
+    var dt2i = 0;
+    while (dt2i < dt2an) {
+        store8(&dt2 + dt2i, load8(dt2a + dt2i));
+        dt2i = dt2i + 1;
+    }
+    store8(&dt2 + dt2an, 0);
+    var dt2j = 0;
+    while (dt2j < dt2bn) {
+        store8(&dt2 + dt2an + 1 + dt2j, load8(dt2b + dt2j));
+        dt2j = dt2j + 1;
+    }
+    store8(&dt2 + dt2an + 1 + dt2bn, 0);
+    var dt2v = mihi_parse_dt_string(&dt2, dt2an + dt2bn + 2);
+    assert_eq(streq(dt2v, "raspberrypi,4-model-b"), 1,
+      "list property yields the first, most-specific entry");
+
+    # Unterminated blob is malformed, not something to repair in place.
+    var dt3[8];
+    store8(&dt3 + 0, 97); store8(&dt3 + 1, 114); store8(&dt3 + 2, 109);
+    assert_eq(mihi_parse_dt_string(&dt3, 3), 0, "blob with no NUL -> 0");
+    # Empty property (a lone NUL) is not a value.
+    var dt4[8];
+    store8(&dt4 + 0, 0);
+    assert_eq(mihi_parse_dt_string(&dt4, 1), 0, "empty property -> 0");
+    assert_eq(mihi_parse_dt_string(&dt4, 0), 0, "zero length -> 0");
+
+    #ifdef CYRIUS_ARCH_AARCH64
+    # ----- cpu.cyr — aarch64 device-tree source (D-1 closure) -------
+    # Only meaningful on a device-tree-booted arm64 box. Asserts the
+    # thing D-1 was about: /proc/cpuinfo carries no model name here, and
+    # the probe gets a real string anyway because it reads the DT.
+    test_group("cpu.cyr — aarch64 model comes from the device tree");
+
+    var a_buf[8192];
+    var a_model = mihi_cpu_model(&a_buf, 8192);
+    assert(a_model != 0, "aarch64 probe yields a model");
+    assert(strlen(a_model) > 2, "aarch64 model is a plausible length");
+
+    # A DT compatible tuple is "vendor,part" — assert the comma rather
+    # than a specific part, so this passes on any arm64 board.
+    var a_i = 0;
+    var a_comma = 0;
+    while (load8(a_model + a_i) != 0) {
+        if (load8(a_model + a_i) == 44) { a_comma = 1; }
+        a_i = a_i + 1;
+    }
+    assert_eq(a_comma, 1, "model is a DT compatible tuple (vendor,part)");
+
+    # And the x86 path really is absent here: no CPUID, and the raw
+    # /proc/cpuinfo parser finds no model name line.
+    var a_c[64];
+    assert_eq(mihi_cpu_model_cpuid(&a_c, 64), 0, "no CPUID brand on aarch64");
+    var a_p[8192];
+    var a_n: i64 = _mihi_read_probe_file("/proc/cpuinfo", &a_p, 8192, MIHI_IO_PREFIX);
+    assert(a_n > 0, "/proc/cpuinfo readable on aarch64");
+    assert_eq(mihi_parse_cpu_model(&a_p, a_n), 0,
+      "/proc/cpuinfo carries no model name on aarch64 (finding D-1)");
+    #endif
 
     # ----- mem.cyr — mihi_find_meminfo_field line-anchor -----------
     # Real meminfo has MemTotal at file-start (no leading '\n');

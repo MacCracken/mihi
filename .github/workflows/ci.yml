@@ -175,6 +175,28 @@ jobs:
           fi
           echo "OK: dist/mihi.cyr deterministic (SHA $sha_first)"
 
+      - name: Cross-target builds
+        # The arch arms are the part of mihi that rots silently: they are
+        # compiled out on the CI runner, so a change can only break them
+        # where nobody looks. D-1 (2026-08-23 audit) was exactly that —
+        # mihi_cpu_model had been returning null on every aarch64 Linux box
+        # since 0.2.0, with a source citation asserting otherwise.
+        #
+        # programs/agnos_probe.cyr is the AGNOS-clean subset (no gpu module,
+        # so no ai-hwaccel — that bundle is mihi's standing agnos blocker).
+        # Compiling is all CI can do; running them needs hardware and QEMU:
+        # scripts/mihi-agnos-verify.py for the sovereign target, and a real
+        # arm64 box for the device-tree path.
+        run: |
+          mkdir -p build
+          cyrius build --agnos programs/agnos_probe.cyr build/mihi-agnos-probe \
+            || { echo "FAIL: --agnos build broke"; exit 1; }
+          cyrius build --aarch64 programs/smoke.cyr build/mihi-smoke-arm64 \
+            || { echo "FAIL: --aarch64 build broke"; exit 1; }
+          cyrius build --aarch64 tests/mihi.tcyr build/mihi-tests-arm64 \
+            || { echo "FAIL: --aarch64 test build broke"; exit 1; }
+          echo "OK: --agnos and --aarch64 targets compile"
+
       - name: Bench files build
         # Verifies every benches/*.bcyr still compiles against current
         # src/ — catches a contributor removing a helper that a bench
@@ -309,6 +331,8 @@ jobs:
                    benches/probe_paths.bcyr benches/parsers.bcyr \
                    benches/gpu_paths.bcyr \
                    scripts/bench-history.sh \
+                   scripts/mihi-agnos-verify.py \
+                   programs/agnos_probe.cyr \
                    dist/mihi.cyr dist/mihi.deps; do
             if [ -f "$f" ]; then echo "  OK: $f"
             else echo "  MISSING: $f"; MISSING=1; fi

@@ -4,6 +4,101 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.2.4] — 2026-08-23
+
+**The two things 1.2.3 left open, closed on real hardware.** 1.2.3's audit filed
+D-1 (`mihi_cpu_model` returns null on aarch64 Linux) as needing arm64 hardware,
+and shipped A-5's AGNOS `mem_free` arm compile-verified only. Both are now
+verified by running, not by reading.
+
+### Added
+
+- **aarch64 Linux CPU-model source — D-1 closed.** `mihi_cpu_model` gains a third
+  arm: on arm64 Linux it reads `/sys/firmware/devicetree/base/cpus/cpu@0/compatible`
+  and returns the device tree's own statement of CPU 0's model. Not a fallback —
+  a separate arch-native source, the same shape as the AGNOS→CPUID split, and it
+  anchors to `cpu@0` for the same big.LITTLE reason `"\nmodel name"` anchors the
+  x86 path. This is the source the *original*, wrong citation named before D-1
+  corrected it; it turns out to have been right about where to look and wrong
+  about the kernel printing it into `/proc/cpuinfo`.
+
+  **Verified on iron** — agnosarm, Raspberry Pi 4 Model B, Ubuntu 24.04.4,
+  kernel 6.8.0-1053-raspi:
+
+  ```
+  arch:    aarch64
+  model:   arm,cortex-a72        ← was: probe returned 0, smoke exited 1
+  cpus:    4
+  distro:  Ubuntu 24.04.4 LTS
+  mihi smoke ok
+  ```
+
+  ⚠ Device-tree only. An arm64 machine booted via ACPI (most server hardware)
+  has no `/sys/firmware/devicetree`, so the probe still returns 0 there — D-1's
+  honest null, narrowed from "all of aarch64" to "ACPI-booted aarch64". Also
+  note the two Linux arms return different *flavours* of string: x86 gives a
+  marketing brand (`AMD Ryzen 7 5800H with Radeon Graphics`), the device tree
+  gives a compatible tuple (`arm,cortex-a72`). mihi returns each raw, vendor
+  prefix included; prettifying is the consumer's job.
+- **`mihi_parse_dt_string(buf, len)`** — pure parser for a device-tree string
+  property. A DT blob *is* the value and carries its own NUL (15 bytes for
+  `"arm,cortex-a72\0"`, no trailing newline), and `compatible` may hold a
+  NUL-separated list, most specific first — so returning the first entry is the
+  DT convention, not a shortcut. A blob with no terminator is malformed and
+  returns 0 rather than being repaired in place.
+- **`programs/agnos_probe.cyr`** — the AGNOS-clean probe subset (five modules;
+  no `gpu.cyr`, therefore no ai-hwaccel). Prints every fact as a raw integer or
+  string with **no early return on a failed probe**, so one boot shows the whole
+  surface and an older binary can be compared against it line for line.
+- **`scripts/mihi-agnos-verify.py`** — QEMU harness that boots the real agnos
+  kernel over gnoboot+OVMF, drives agnsh via HMP `sendkey`, and runs the probe
+  **with a control arm in the same boot**. Per the agnos harness README's rule
+  that a test which would also pass when broken is worthless, PASS *requires*
+  the control to fail; a green control is reported as INCONCLUSIVE, not a pass.
+- **Cross-target build gate in CI** — `--agnos` and `--aarch64` now compile on
+  every run. The arch arms are the part of mihi that rots silently, because they
+  are compiled out on the runner: D-1 sat undetected since 0.2.0 for exactly
+  that reason.
+- **Test coverage**: `mihi_parse_dt_string` blob shapes (terminated, list,
+  unterminated, empty, zero-length) run on every target; an aarch64-only group
+  asserts the DT tuple shape, that CPUID yields nothing there, and — the D-1
+  claim itself — that `/proc/cpuinfo` carries no model-name line. The
+  x86-only CPUID-vs-`/proc` group is now arch-guarded so the suite runs on both.
+  **143 on x86, 144 on aarch64** (the arm64 build drops 5 CPUID assertions and
+  adds 6 device-tree ones).
+
+### Verified
+
+- **A-5 on the real sovereign kernel.** `scripts/mihi-agnos-verify.py`, one boot,
+  both binaries:
+
+  | | control (pre-A-5, `188a7d3`) | this tree |
+  |---|---|---|
+  | `free B:` | **-1** | **489295872** |
+
+  with `total B: 535580672`, `cpus: 1`, `uptime: 43`, `kernel: AGNOS`,
+  `distro: AGNOS` — free ≤ total, figures internally consistent. The control
+  failing at the same call in the same boot is what makes this a measurement
+  rather than an assertion.
+- **The full suite on arm64 hardware**: 144 passed, 0 failed on agnosarm.
+- Host: 143 passed / 0 failed, smoke clean with empty stderr, whole CI workflow
+  replayed locally.
+
+### Notes
+
+- **`programs/smoke.cyr` cannot run on AGNOS, and that is not new.** Built
+  `--agnos` it faults before its first println — `run: exit 142`, measured in
+  QEMU for the pre-A-5 binary and this tree's alike — because it links
+  `src/gpu.cyr` and therefore the ai-hwaccel bundle, mihi's standing agnos
+  blocker (ai-hwaccel → thread → atomic → Linux `CLONE_VM`). Every previous
+  agnos claim in this repo went through `iam`, which links mihi without the gpu
+  module. `agnos_probe.cyr` exists so mihi can answer for itself.
+- **The control arm earned its keep on its first run.** The first attempt built
+  the "1.2.2 control" from `HEAD`, which had moved on to 1.2.3 and already
+  carried the A-5 fix — so the control passed, and the harness correctly refused
+  to call the run a pass. Rebuilt from `188a7d3` (the last commit with a
+  `mihi_mem_free` that had no AGNOS arm), it printed `-1` as predicted.
+
 ## [1.2.3] — 2026-08-23
 
 **P(-1) audit / hardening sweep.** Second full audit of the probe surface (the

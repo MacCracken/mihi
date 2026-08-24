@@ -1,0 +1,65 @@
+# mihi agnos probe — the non-GPU probe surface, for scripts/mihi-agnos-verify.py.
+#
+# WHY THIS EXISTS SEPARATELY FROM programs/smoke.cyr. smoke.cyr includes
+# src/main.cyr, which pulls src/gpu.cyr, which pulls the ai-hwaccel bundle —
+# and that is mihi's standing AGNOS blocker (ai-hwaccel → thread → atomic →
+# Linux CLONE_VM, see docs/development/state.md). Built with --agnos, smoke
+# faults before its first println: `run: exit 142`, measured in QEMU
+# 2026-08-23, for the 1.2.2 binary and this tree's alike. So the smoke binary
+# has never been the vehicle for an agnos claim in this repo — every previous
+# one went through `iam`, which links mihi without the gpu module.
+#
+# This program includes the five modules that ARE agnos-clean and prints every
+# fact as a raw integer or string, with NO early return on a failed probe. That
+# is the whole design: a probe that cannot answer prints its sentinel and the
+# run continues, so one boot shows the entire surface and a control binary from
+# an older source can be compared line for line against it.
+#
+# Build: cyrius build --agnos programs/agnos_probe.cyr build/mihi-agnos-probe
+# Run:   via scripts/mihi-agnos-verify.py (QEMU), or natively on Linux for a
+#        sanity check — every probe here has a Linux arm too.
+
+include "src/types.cyr"
+include "src/io.cyr"
+include "src/cpu.cyr"
+include "src/mem.cyr"
+include "src/kernel.cyr"
+include "src/host.cyr"
+
+fn main() {
+    alloc_init();
+
+    var uts[390];
+    var res = mihi_uname(&uts);
+    if (is_err_result(res) == 1) {
+        println("probe: uname failed");
+        return 1;
+    }
+    print("kernel:  ", 9); println(mihi_kernel_name(&uts));
+    print("arch:    ", 9); println(mihi_cpu_arch(&uts));
+    print("host:    ", 9); println(mihi_hostname(&uts));
+
+    print("cpus:    ", 9); println_int(mihi_cpu_count());
+
+    # Raw byte counts, not MiB: the discriminator this harness turns on is
+    # mihi_mem_free's sentinel. Before 1.2.3 (audit A-5) it had no AGNOS arm
+    # and returned 0 - 1 forever; now it answers from sysinfo#35 §4.4 freeram.
+    # Printing bytes makes "-1" unmistakable next to a real figure.
+    var meminfo[4096];
+    print("total B: ", 9); println_int(mihi_mem_total(&meminfo, 4096));
+    print("free B:  ", 9); println_int(mihi_mem_free(&meminfo, 4096));
+
+    var up[64];
+    print("uptime:  ", 9); println_int(mihi_uptime_secs(&up, 64));
+
+    var db[1024];
+    var d = mihi_distro(&db, 1024);
+    if (d == 0) {
+        println("distro:  (null)");
+    } else {
+        print("distro:  ", 9); println(d);
+    }
+
+    println("mihi agnos probe ok");
+    return 0;
+}

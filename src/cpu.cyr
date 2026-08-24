@@ -194,6 +194,54 @@ fn mihi_parse_cpu_model(buf, len): cstring {
     return buf + start;
 }
 
+# ----- Slice B (aarch64 Linux) — device-tree CPU compatible ---------
+#
+# arm64 Linux publishes no `model name` line (audit D-1 / roadmap): the
+# kernel's c_show() prints CPU implementer / part / revision as raw
+# hex and nothing human-readable. Verified on iron, agnosarm (Raspberry
+# Pi 4 Model B, kernel 6.8.0-1053-raspi):
+#     $ grep -c "model name" /proc/cpuinfo
+#     0
+# The device tree does carry it, per CPU, in the property the ORIGINAL
+# (wrong) citation named before D-1 corrected it:
+#     /sys/firmware/devicetree/base/cpus/cpu@0/compatible
+#     = "arm,cortex-a72\0"
+# So this is not a fallback for the x86 path — it is a separate,
+# arch-native source, the same shape as the AGNOS→CPUID split. cpu@0
+# anchors the fact the way "\nmodel name" anchors it on x86: one
+# source per fact, and the first core on a big.LITTLE part.
+#
+# ⚠ Device-tree only. An arm64 machine booted via ACPI (most server
+# hardware) has no /sys/firmware/devicetree, so this returns 0 and the
+# consumer renders "unknown" — the same honest null D-1 documented,
+# now narrowed from "all of aarch64" to "ACPI-booted aarch64".
+
+# Parse a device-tree string property. Unlike the /proc text files, a
+# DT property blob IS the value and carries its own NUL — the file is
+# 15 bytes for "arm,cortex-a72\0", with no trailing newline. A
+# `compatible` property may hold a LIST of NUL-separated strings, most
+# specific first (the root node's is "raspberrypi,4-model-b\0brcm,
+# bcm2711\0"), so returning the first entry is the DT convention, not
+# a shortcut.
+#
+# Returns a cstring into `buf`, or 0 if the blob is empty or carries no
+# terminator. Does NOT mutate `buf` — the terminator is already there,
+# and a blob without one is malformed input rather than something to
+# repair in place ("one source per fact ... return error").
+# Pure function — unit-testable against a synthetic blob.
+fn mihi_parse_dt_string(buf, len): cstring {
+    if (len <= 0) { return 0; }
+    var i = 0;
+    var term = 0 - 1;
+    while (i < len && term == 0 - 1) {
+        if (load8(buf + i) == 0) { term = i; }
+        i = i + 1;
+    }
+    if (term == 0 - 1) { return 0; }   # no NUL in the blob — malformed
+    if (term == 0) { return 0; }       # empty string property
+    return buf;
+}
+
 # ----- Slice B (agnos / sovereign) — CPUID processor brand string ---
 #
 # /proc/cpuinfo is Linux-only; AGNOS has no procfs, so the model line rendered
@@ -299,17 +347,22 @@ fn mihi_cpu_model_cpuid(buf, cap): cstring {
 # arch/x86/kernel/cpu/proc.c. The "model name" field is the human brand
 # string from CPUID brand-string leaves 0x80000002/3/4.
 #
-# ⚠ x86 only, and that is a property of the kernel, not of this parser.
-# arm64's c_show() (arch/arm64/kernel/cpuinfo.c) emits "processor",
-# "BogoMIPS", "Features", "CPU implementer", "CPU architecture",
-# "CPU variant", "CPU part", "CPU revision" — and no "model name" line
-# at all. So on aarch64 Linux this probe returns 0, and a consumer must
-# render null as "unknown" rather than assume a string. (Corrected at
-# the 2026-08-23 audit, finding D-1: the comment here previously cited
-# a device-tree /cpus/cpu@N/compatible source for aarch64 that the
-# kernel does not in fact print into /proc/cpuinfo.) Sourcing the arm64
-# brand from the device tree is tracked in roadmap.md, not done here —
-# it is a second source for one fact and needs hardware to verify.
+# Three targets, three sources, no fallback chain between them:
+#   AGNOS          → CPUID brand string (no procfs on the sovereign kernel)
+#   aarch64 Linux  → device tree, cpus/cpu@0/compatible
+#   x86 Linux      → /proc/cpuinfo "model name"
+#
+# The aarch64 arm exists because the kernel's c_show()
+# (arch/arm64/kernel/cpuinfo.c) emits "processor", "BogoMIPS",
+# "Features", "CPU implementer", "CPU architecture", "CPU variant",
+# "CPU part", "CPU revision" — and NO "model name" line at all. The
+# 2026-08-23 audit (finding D-1) caught the comment here claiming
+# otherwise and left the gap open; 1.2.4 closes it against real arm64
+# hardware. Note the two arms return different *flavours* of string —
+# x86 gives a marketing brand ("AMD Ryzen 7 5800H with Radeon
+# Graphics"), the device tree gives a compatible tuple
+# ("arm,cortex-a72"). mihi returns each raw, vendor prefix included;
+# prettifying is the consumer's job per CLAUDE.md.
 fn mihi_cpu_model(buf, cap): cstring {
     #ifdef CYRIUS_TARGET_AGNOS
     # AGNOS has no /proc — read the brand straight from CPUID (the same x86 datum
@@ -317,8 +370,19 @@ fn mihi_cpu_model(buf, cap): cstring {
     return mihi_cpu_model_cpuid(buf, cap);
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
+    #ifdef CYRIUS_ARCH_AARCH64
+    # arm64 Linux: the device tree, not /proc/cpuinfo — see the
+    # mihi_parse_dt_string block above and audit finding D-1. WHOLE, not
+    # PREFIX: the property is 15 bytes and a cut one has no terminator.
+    var na = _mihi_read_probe_file("/sys/firmware/devicetree/base/cpus/cpu@0/compatible",
+      buf, cap, MIHI_IO_WHOLE);
+    if (na < 0) { return 0; }
+    return mihi_parse_dt_string(buf, na);
+    #endif
+    #ifndef CYRIUS_ARCH_AARCH64
     var n = _mihi_read_probe_file("/proc/cpuinfo", buf, cap, MIHI_IO_PREFIX);
     if (n < 0) { return 0; }
     return mihi_parse_cpu_model(buf, n);
+    #endif
     #endif
 }
