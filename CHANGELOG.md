@@ -4,6 +4,50 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.2.5] — 2026-08-24 — drop the `bayan` cover; consumers stop linking a 641 KB monolith
+
+`bayan` sat in `[deps].stdlib` purely as **cover for a dependency's dependency**. mihi's
+own source references zero json/bayan symbols — `grep -rE '\b(bayan|json)_' src/` is
+empty — and the entry existed only so the `registry_to_json` path inside
+`dist/ai-hwaccel.cyr` could resolve through bayan's legacy back-compat aliases.
+
+The cost landed on every mihi consumer: because those aliases ship **only** in the
+monolithic `dist/bayan.cyr`, declaring `bayan` here forced each one to link all 641 KB of
+it (json + toml + cyml + csv + base64 + bigint + u128 + yaml + pdf) for a JSON path mihi
+never touches. Measured in chakshu, which links this bundle for its GPU panel:
+**861,536 B → 571,496 B, −290,040 B (−33.7%)**.
+
+### Changed
+
+- **`bayan` removed from `[deps].stdlib`** (21 → 20 modules), and correspondingly from
+  `dist/mihi.deps` (21 → 20 leaves). The mihi API surface is unchanged.
+- **ai-hwaccel pin `2.3.18` → `2.3.19`.** This is a **hard requirement, not a refresh** —
+  2.3.19 is what moves those call sites onto the canonical `bayan_json_v_*` names and
+  gives ai-hwaccel its own focused `bayan-json` dep. Pinning 2.3.18 while dropping
+  `bayan` here would leave the bundle's bare `json_v_*` references unresolved.
+
+### Verified
+
+- `cyrius build programs/smoke.cyr` clean — **no undefined-function warnings**; the
+  focused `bayan-json` resolves transitively through ai-hwaccel.
+- `tests/mihi.tcyr` **143/143**, `src/test.cyr` clean, `build/mihi-smoke` reports the
+  expected identity block.
+- A clean `cyrius deps` vendors `lib/bayan-json.cyr` and **no** `lib/bayan.cyr`.
+
+### Release ordering — this tag must follow ai-hwaccel 2.3.19
+
+`[deps.ai-hwaccel]` pins `2.3.19`, so **ai-hwaccel must be tagged and pushed first** or
+`cyrius deps` fails with *"modules entry not found at tag"*. The verification above was
+run against a local `path = "../ai-hwaccel"` override; the manifest is committed with the
+git tag, not the path.
+
+Because mihi **commits `lib/`** and CI gates on `cyrius deps --verify`, the vendored
+snapshot and `cyrius.lock` are deliberately **left untouched in this commit** — they
+cannot be regenerated correctly until the 2.3.19 tag resolves. After ai-hwaccel 2.3.19 is
+published, run `cyrius deps` once and commit the resulting `lib/` + `cyrius.lock` delta
+(expect: `lib/bayan.cyr` removed, `lib/bayan-json.cyr` added, `lib/ai-hwaccel.cyr`
+updated). Tagging 1.2.5 before that step would ship a lockfile CI rejects.
+
 ## [1.2.4] — 2026-08-23
 
 **The two things 1.2.3 left open, closed on real hardware.** 1.2.3's audit filed

@@ -41,13 +41,19 @@ modules = ["src/types.cyr", "src/io.cyr", "src/cpu.cyr", "src/mem.cyr", "src/ker
 #   concatenation, so the parser needs the full set; DCE drops unused
 #   code from the linked binary.
 #
-# 6.2.x stdlib reorg: the standalone `json` module was carved out of the
-# cyrius stdlib into the bundled `bayan` distribution (json / toml / cyml /
-# csv / base64 / bigint / u128) and folded back byte-identical via the
-# sandhi pattern. So `json` → `bayan` in this list. mihi calls no json
-# directly — the `registry_to_json` symbols inside dist/ai-hwaccel.cyr
-# resolve through bayan's back-compat aliases.
-stdlib = ["string", "fmt", "alloc", "io", "vec", "str", "slice", "syscalls", "sys", "assert", "fs", "tagged", "process", "fnptr", "thread", "freelist", "hashmap", "sakshi", "ct", "bayan", "bench"]
+# `bayan` was in this list through 1.2.4, purely as cover for the
+# `registry_to_json` path inside dist/ai-hwaccel.cyr — mihi's own source
+# references zero json/bayan symbols (verified: `grep -rE '\b(bayan|json)_' src/`
+# is empty). It was never mihi's dependency.
+#
+# Dropped at 1.2.5: ai-hwaccel 2.3.19 moved those call sites off bayan's legacy
+# back-compat aliases onto the canonical `bayan_json_v_*` names and now carries
+# its own focused `bayan-json` dep, so its sidecar no longer asks consumers for
+# bayan either. Declaring it here forced every mihi consumer to link the full
+# 641 KB bayan monolith (json + toml + cyml + csv + base64 + bigint + u128 +
+# yaml + pdf) for a JSON path mihi never touches. Do not re-add it: if a future
+# mihi genuinely needs JSON, take `dist/bayan-json.cyr` as a git dep instead.
+stdlib = ["string", "fmt", "alloc", "io", "vec", "str", "slice", "syscalls", "sys", "assert", "fs", "tagged", "process", "fnptr", "thread", "freelist", "hashmap", "sakshi", "ct", "bench"]
 
 # ai-hwaccel: hardware-accelerator detection. mihi pins 2.2.5 — the
 # first release with the no-exec contract (registry_detect_no_exec()
@@ -55,5 +61,5 @@ stdlib = ["string", "fmt", "alloc", "io", "vec", "str", "slice", "syscalls", "sy
 # no-exec API; see docs/development/roadmap.md.
 [deps.ai-hwaccel]
 git = "https://github.com/MacCracken/ai-hwaccel.git"
-tag = "2.3.18"
+tag = "2.3.19"
 modules = ["dist/ai-hwaccel.cyr"]
