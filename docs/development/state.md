@@ -5,6 +5,39 @@
 
 ## Version
 
+**1.2.3** — released 2026-08-23. **P(-1) audit / hardening sweep** —
+the second full audit of the probe surface (first was 2026-05-19,
+pre-0.6.0). Six code fixes, four documentation corrections, one new
+`[lib]` module, 116 → 137 assertions. Probe API unchanged.
+
+The headline finding is **A-1**: every file-reading probe carried its
+own `open / one read / close`, six copies, and a read that filled the
+buffer was indistinguishable from EOF — so an undersized buffer
+returned a *plausible wrong value rather than an error*. The
+short-read half was not theoretical: a single `read(fd, buf, 8192)` on
+`/proc/cpuinfo` returns 3288 bytes on this host, so `mihi_cpu_model`
+had been parsing 3288 of its caller's 8192 since 0.2.0. Fixed once, in
+a new `src/io.cyr` ([ADR 0003](../adr/0003-shared-probe-read.md)),
+which also brought `O_NONBLOCK` (a repointed `/etc/os-release` symlink
+landing on a FIFO must not hang a login) and `O_CLOEXEC`.
+
+**A-4** is the one to read twice — the only finding across both audits
+whose failure mode was a memory-safety event rather than a wrong
+number: `mihi_uname` left the caller's buffer uninitialised on failure,
+and the field accessors do not check the `Result` by contract, so a
+caller who ignored it got an unterminated cstring into stack garbage.
+**A-2** and **A-3** are both descendants of the 0.6.0 audit — places
+where that sweep bounded one step of an arithmetic chain and left the
+next unbounded; A-3 could return a *negative* byte count
+(-9017668127734891520, measured). **A-5** gave `mihi_mem_free` the AGNOS
+arm it never had. **D-1 … D-4** corrected citations that asserted false
+things about the arm64 kernel and the os-release spec.
+
+Cost, measured against the 1.2.2 source on the same host: `mihi_uname`
++533 ns (the zeroing), `mihi_cpu_model` **+126%** (it now reads all
+8192 bytes it asks for), everything else +3–16%. Full write-up:
+[`docs/audit/2026-08-23-audit.md`](../audit/2026-08-23-audit.md).
+
 **1.2.2** — released 2026-08-23. Toolchain / dependency maintenance
 cut. Cyrius pin **6.2.37 → 6.5.35** (closes the wrapper/manifest
 drift; `cyrius lib sync --full` re-vendored the version-matched
@@ -180,21 +213,22 @@ been additive or internal: AGNOS build-target branches (1.1.2), the
 the log-level clamp (1.2.2).
 
 - `src/types.cyr` (4 lines) — shared types (empty; `MihiInfo` deferred per ADR 0001)
-- `src/cpu.cyr` (263) — `mihi_cpu_arch` ✅ + `mihi_cpu_count` ✅ + `mihi_cpu_model` ✅ (+ `mihi_parse_cpu_range` / `mihi_parse_cpu_model` pure-function helpers, and `mihi_cpu_model_cpuid` / `mihi_cpu_brand_fill` — the x86 CPUID brand-string path the AGNOS build dispatches to)
-- `src/mem.cyr` (113) — `mihi_mem_total` ✅ + `mihi_mem_free` ✅ (+ `mihi_find_meminfo_field` / `mihi_parse_meminfo_kb` / `mihi_extract_meminfo_bytes` helpers)
-- `src/kernel.cyr` (44) — `mihi_uname` wrapper over `sys_uname` (`Result`-wrapped since 1.1.3) + `mihi_kernel_name` ✅ + `mihi_kernel_version` ✅
-- `src/host.cyr` (172) — `mihi_hostname` ✅ + `mihi_uptime_secs` ✅ + `mihi_distro` ✅ (+ `mihi_parse_uptime_secs` / `mihi_find_osrelease_key` / `mihi_parse_osrelease_value` helpers)
+- `src/io.cyr` (149) — `_mihi_read_probe_file`, the one `/proc` + `/sys` read path: looped reads, bounded `-EINTR` retry, truncation detection (`MIHI_IO_WHOLE` vs `MIHI_IO_PREFIX`), `O_NONBLOCK` + `O_CLOEXEC`. Added at 1.2.3 per [ADR 0003](../adr/0003-shared-probe-read.md); inert on AGNOS
+- `src/cpu.cyr` (324) — `mihi_cpu_arch` ✅ + `mihi_cpu_count` ✅ + `mihi_cpu_model` ✅ (+ `mihi_parse_cpu_range` / `mihi_parse_cpu_model` pure-function helpers, and `mihi_cpu_model_cpuid` / `mihi_cpu_brand_fill` — the x86 CPUID brand-string path the AGNOS build dispatches to)
+- `src/mem.cyr` (152) — `mihi_mem_total` ✅ + `mihi_mem_free` ✅ (+ `mihi_find_meminfo_field` / `mihi_parse_meminfo_kb` / `mihi_extract_meminfo_bytes` helpers)
+- `src/kernel.cyr` (64) — `mihi_uname` wrapper over `sys_uname` (`Result`-wrapped since 1.1.3) + `mihi_kernel_name` ✅ + `mihi_kernel_version` ✅
+- `src/host.cyr` (196) — `mihi_hostname` ✅ + `mihi_uptime_secs` ✅ + `mihi_distro` ✅ (+ `mihi_parse_uptime_secs` / `mihi_find_osrelease_key` / `mihi_parse_osrelease_value` helpers)
 - `src/gpu.cyr` (168) — `mihi_gpu_count` ✅ + `mihi_gpu_name` ✅ + `mihi_gpu_memory_bytes` ✅ + `mihi_gpu_family` ✅ + `mihi_gpu_type` ✅ (module-level singleton cache via `_mihi_gpu_ensure`; first call runs `registry_detect_no_exec()` under a save/clamp/restore of the caller's `sakshi` log level)
 - `src/main.cyr` (22) — convenience re-export (consumed by smoke + tests; not in distlib bundle)
 - `programs/smoke.cyr` (120) — smoke binary; prints `kernel / release / arch / host / model / cpus / mem MiB / free MiB / uptime / distro / gpu cnt / gpu / gpu MiB`
-- `dist/mihi.cyr` (786 lines; 764 by `cyrius distlib`'s non-blank count) — the consumable bundle; `dist/mihi.deps` is the stdlib-leaf sidecar beside it (cyrius 6.5.x), both CI-gated against drift
+- `dist/mihi.cyr` (1082 lines; 1057 by `cyrius distlib`'s non-blank count) — the consumable bundle; `dist/mihi.deps` is the stdlib-leaf sidecar beside it (cyrius 6.5.x), both CI-gated against drift
 
 ## Tests
 
-- `tests/mihi.tcyr` — primary suite: **116 assertions across 45 test
+- `tests/mihi.tcyr` — primary suite: **137 assertions across 54 test
   groups** (104 from the 0.5.0 hardening push, 4 from the 0.6.0 audit
   regressions, 5 from the 1.2.0 CPUID work, 3 from the 1.2.2 log-level
-  clamp). Slice A: real-uname happy path + zero-init buffer +
+  clamp, 21 from the 1.2.3 audit — Slice F). Slice A: real-uname happy path + zero-init buffer +
   synthetic-uts offset round-trip. Slice B: range-parser unit tests,
   cpuinfo-parser synthetic tests (happy + missing-field + line-anchor
   rejection), real `/proc/cpuinfo` + `/sys` reads. Slice C: meminfo
@@ -211,6 +245,15 @@ the log-level clamp (1.2.2).
   assertion that a live detect leaves the caller's `sakshi` level
   exactly as it found it — a verbose caller restored, a quiet caller
   never raised.
+- **Slice F (1.2.3 audit regressions)**: `_mihi_read_probe_file`'s
+  truncation split (WHOLE errors, PREFIX accepts a filled buffer),
+  missing-path and zero-`cap` sentinels, probes returning an error
+  rather than a truncated number on an undersized `cap`, the
+  `mihi_parse_cpu_range` total cap at its boundary and past it, the
+  `kB → bytes` scale rejection plus the largest value that still
+  scales, `mihi_uname` leaving no poison byte behind, single-quoted
+  os-release values (and an apostrophe inside a double-quoted one), and
+  the previously untested `VERSION_ID=` / `ID=` prefix-shadowing case.
 - `tests/mihi.bcyr` — benchmark stub
 - `tests/mihi.fcyr` — fuzz stub
 
@@ -220,11 +263,11 @@ the log-level clamp (1.2.2).
 cyrius deps
 cyrius build programs/smoke.cyr build/mihi-smoke
 ./build/mihi-smoke            # 11+ lines incl. gpu cnt / gpu / gpu MiB + "mihi smoke ok", exit 0, empty stderr
-cyrius test tests/mihi.tcyr   # 116/116 pass
+cyrius test tests/mihi.tcyr   # 137/137 pass
 cyrius build --agnos programs/smoke.cyr build/mihi-smoke-agnos   # sovereign-target cross-build
 ```
 
-Build is clean as of 1.2.2 / cyrius 6.5.35 / ai-hwaccel 2.3.18 —
+Build is clean as of 1.2.3 / cyrius 6.5.35 / ai-hwaccel 2.3.18 —
 manifest pin and installed wrapper agree, `lib/` matches the pinned
 snapshot exactly, and smoke's stderr is empty (ai-hwaccel's detect
 logging is clamped for the duration of the one detect call; see the

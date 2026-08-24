@@ -5,53 +5,53 @@
 
 ## Run History
 
-| | Run 1 | Run 2 | 
-|---|---|---|
-| **Date** | `2026-05-19T23:57:45Z` | `2026-05-20T00:10:38Z` | 
-| **Commit** | `8926c70` | `47de83a` | 
+| | Run 1 | Run 2 | Run 3 | 
+|---|---|---|---|
+| **Date** | `2026-05-19T23:57:45Z` | `2026-05-20T00:10:38Z` | `2026-08-23T21:53:17Z` | 
+| **Commit** | `8926c70` | `47de83a` | `188a7d3` | 
 
 ## Results
 
 ### gpu
 
-| Benchmark | `8926c70` | `47de83a` | Δ first→last |
-|-----------|------|------|------|
-| count_cold | 1.15 ms | 1.40 ms | +22.0% |
-| count_warm | 61 ns | 55 ns | -9.8% |
-| accessor_name_idx0 | 70 ns | 63 ns | -10.0% |
+| Benchmark | `8926c70` | `47de83a` | `188a7d3` | Δ first→last |
+|-----------|------|------|------|------|
+| count_cold | 1.15 ms | 1.40 ms | 622.89 µs | -45.7% |
+| count_warm | 61 ns | 55 ns | 37 ns | -39.3% |
+| accessor_name_idx0 | 70 ns | 63 ns | 37 ns | -47.1% |
 
 ### parser
 
-| Benchmark | `8926c70` | `47de83a` | Δ first→last |
-|-----------|------|------|------|
-| cpu_range_simple | 53 ns | 51 ns | -3.8% |
-| cpu_range_disjoint | 104 ns | 95 ns | -8.7% |
-| cpu_model | 319 ns | 304 ns | -4.7% |
-| meminfo_MemTotal | 168 ns | 180 ns | +7.1% |
-| meminfo_MemAvailable | 741 ns | 720 ns | -2.8% |
-| uptime_secs | 46 ns | 54 ns | +17.4% |
-| osrelease_value | 50 ns | 44 ns | -12.0% |
+| Benchmark | `8926c70` | `47de83a` | `188a7d3` | Δ first→last |
+|-----------|------|------|------|------|
+| cpu_range_simple | 53 ns | 51 ns | 33 ns | -37.7% |
+| cpu_range_disjoint | 104 ns | 95 ns | 54 ns | -48.1% |
+| cpu_model | 319 ns | 304 ns | 175 ns | -45.1% |
+| meminfo_MemTotal | 168 ns | 180 ns | 104 ns | -38.1% |
+| meminfo_MemAvailable | 741 ns | 720 ns | 411 ns | -44.5% |
+| uptime_secs | 46 ns | 54 ns | 29 ns | -37.0% |
+| osrelease_value | 50 ns | 44 ns | 25 ns | -50.0% |
 
 ### probe
 
-| Benchmark | `8926c70` | `47de83a` | Δ first→last |
-|-----------|------|------|------|
-| mihi_uname | 2.00 µs | 2.00 µs | — |
-| mihi_cpu_count | 8.00 µs | 8.00 µs | — |
-| mihi_mem_total | 13.00 µs | 13.00 µs | — |
-| mihi_mem_free | 14.00 µs | 13.00 µs | -7.1% |
-| mihi_uptime_secs | 24.00 µs | 23.00 µs | -4.2% |
-| mihi_cpu_model | 51.00 µs | 48.00 µs | -5.9% |
-| mihi_distro | 6.00 µs | 6.00 µs | — |
+| Benchmark | `8926c70` | `47de83a` | `188a7d3` | Δ first→last |
+|-----------|------|------|------|------|
+| mihi_uname | 2.00 µs | 2.00 µs | 1.03 µs | -48.4% |
+| mihi_cpu_count | 8.00 µs | 8.00 µs | 5.75 µs | -28.1% |
+| mihi_mem_total | 13.00 µs | 13.00 µs | 9.35 µs | -28.1% |
+| mihi_mem_free | 14.00 µs | 13.00 µs | 10.21 µs | -27.1% |
+| mihi_uptime_secs | 24.00 µs | 23.00 µs | 22.05 µs | -8.1% |
+| mihi_cpu_model | 51.00 µs | 48.00 µs | 83.93 µs | +64.6% |
+| mihi_distro | 6.00 µs | 6.00 µs | 3.92 µs | -34.6% |
 
 ### accessor
 
-| Benchmark | `8926c70` | `47de83a` | Δ first→last |
-|-----------|------|------|------|
-| mihi_kernel_name | 4 ns | 4 ns | — |
-| mihi_kernel_version | 5 ns | 4 ns | -20.0% |
-| mihi_cpu_arch | 5 ns | 4 ns | -20.0% |
-| mihi_hostname | 5 ns | 4 ns | -20.0% |
+| Benchmark | `8926c70` | `47de83a` | `188a7d3` | Δ first→last |
+|-----------|------|------|------|------|
+| mihi_kernel_name | 4 ns | 4 ns | 2 ns | -50.0% |
+| mihi_kernel_version | 5 ns | 4 ns | 2 ns | -60.0% |
+| mihi_cpu_arch | 5 ns | 4 ns | 3 ns | -40.0% |
+| mihi_hostname | 5 ns | 4 ns | 3 ns | -40.0% |
 
 ---
 

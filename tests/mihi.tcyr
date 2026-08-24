@@ -786,6 +786,204 @@ fn main() {
       123456789012345678,
       "uptime 19-digit input capped at 18 digits");
 
+
+    # ====================================================================
+    # Slice F — 2026-08-23 P(-1) audit regressions (1.2.3).
+    # One group per finding that produced a code change. Each is written
+    # to FAIL against the 1.2.2 source unless noted.
+    # ====================================================================
+
+    # ----- A-1: truncation is detected, not silently absorbed --------
+    # The pre-1.2.3 probes did `open / one read / close` and could not
+    # tell a filled buffer from EOF. Reading /proc/uptime (20 bytes on
+    # this box) into 4 bytes used to yield the first 4 digits parsed as
+    # a whole uptime — a wrong number with no error. Now WHOLE mode
+    # reports MIHI_IO_TRUNC and the probe returns its error sentinel.
+    test_group("io.cyr — WHOLE read reports truncation");
+
+    var tbuf[8];
+    assert_eq(_mihi_read_probe_file("/proc/uptime", &tbuf, 4, MIHI_IO_WHOLE),
+      0 - MIHI_IO_TRUNC,
+      "/proc/uptime into 4 bytes -> MIHI_IO_TRUNC");
+
+    var fullbuf[128];
+    var full_n: i64 = _mihi_read_probe_file("/proc/uptime", &fullbuf, 128, MIHI_IO_WHOLE);
+    assert(full_n > 0, "/proc/uptime into 128 bytes -> byte count");
+    assert(full_n < 128, "short read means EOF was reached");
+
+    # PREFIX mode is the deliberate opposite: a filled buffer is fine
+    # and the byte count comes back. This is the /proc/cpuinfo case.
+    test_group("io.cyr — PREFIX read accepts a filled buffer");
+    assert_eq(_mihi_read_probe_file("/proc/uptime", &tbuf, 4, MIHI_IO_PREFIX), 4,
+      "PREFIX fills the buffer and returns cap");
+
+    test_group("io.cyr — open failure and degenerate cap");
+    var nbuf[16];
+    assert_eq(_mihi_read_probe_file("/proc/mihi-does-not-exist", &nbuf, 16, MIHI_IO_WHOLE),
+      0 - MIHI_IO_FAIL,
+      "missing path -> MIHI_IO_FAIL");
+    assert_eq(_mihi_read_probe_file("/proc/uptime", &nbuf, 0, MIHI_IO_WHOLE),
+      0 - MIHI_IO_FAIL,
+      "cap 0 -> MIHI_IO_FAIL, no syscall issued");
+
+    # The probes inherit it: an undersized cap is now an honest error
+    # rather than a plausible wrong fact.
+    test_group("host/mem — undersized cap errors instead of lying");
+    var ubuf[8];
+    assert_eq(mihi_uptime_secs(&ubuf, 4), 0 - 1,
+      "mihi_uptime_secs with a 4-byte cap -> -1 (was a truncated number)");
+    var mbuf[16];
+    assert_eq(mihi_mem_total(&mbuf, 16), 0 - 1,
+      "mihi_mem_total with a 16-byte cap -> -1 (was a truncated number)");
+
+    # ----- A-2: mihi_parse_cpu_range total overflow guard ------------
+    # The per-range digit cap bounded each addend; the running total was
+    # unbounded. Anything past MIHI_CPU_MAX is corrupt input -> 0.
+    test_group("audit A-2 — cpu_range caps the running total");
+
+    var big = "0-2000000\n";
+    var big_buf[32];
+    var big_len: i64 = strlen(big);
+    var big_i = 0;
+    while (big_i < big_len) {
+        store8(&big_buf + big_i, load8(big + big_i));
+        big_i = big_i + 1;
+    }
+    assert_eq(mihi_parse_cpu_range(&big_buf, big_len), 0,
+      "range summing past MIHI_CPU_MAX -> 0 (malformed)");
+
+    # Two 18-digit ranges: each addend is under the digit cap, the sum
+    # is ~2e18. Pre-fix this returned a huge positive; enough of them
+    # wrap i64 negative. Now it reports malformed.
+    var huge = "0-999999999999999999,0-999999999999999999\n";
+    var huge_buf[64];
+    var huge_len: i64 = strlen(huge);
+    var huge_i = 0;
+    while (huge_i < huge_len) {
+        store8(&huge_buf + huge_i, load8(huge + huge_i));
+        huge_i = huge_i + 1;
+    }
+    assert_eq(mihi_parse_cpu_range(&huge_buf, huge_len), 0,
+      "two 18-digit ranges -> 0, not a wrapped total");
+
+    # The guard is a ceiling, not a narrowing: a plausible large box
+    # still counts, and so does the boundary value itself.
+    var edge = "0-1048575\n";
+    var edge_buf[32];
+    var edge_len: i64 = strlen(edge);
+    var edge_i = 0;
+    while (edge_i < edge_len) {
+        store8(&edge_buf + edge_i, load8(edge + edge_i));
+        edge_i = edge_i + 1;
+    }
+    assert_eq(mihi_parse_cpu_range(&edge_buf, edge_len), MIHI_CPU_MAX,
+      "exactly MIHI_CPU_MAX CPUs still counts");
+
+    # ----- A-3: kB -> bytes scale overflow ---------------------------
+    # 0.6.0's M-1 capped the accumulator at 18 digits; 10^18 * 1024 is
+    # still four times i64 max, so the scale could wrap NEGATIVE and
+    # sail past a consumer's `>= 0` check.
+    test_group("audit A-3 — meminfo kB->bytes rejects unscalable values");
+
+    var ovf = "MemTotal: 999999999999999999 kB\n";
+    var ovf_buf[64];
+    var ovf_len: i64 = strlen(ovf);
+    var ovf_i = 0;
+    while (ovf_i < ovf_len) {
+        store8(&ovf_buf + ovf_i, load8(ovf + ovf_i));
+        ovf_i = ovf_i + 1;
+    }
+    assert_eq(mihi_extract_meminfo_bytes(&ovf_buf, ovf_len, "MemTotal:", 9), 0 - 1,
+      "kB value that would wrap the * 1024 -> -1");
+
+    # The boundary itself must still scale: MIHI_MEM_KB_MAX * 1024 is
+    # the largest byte count i64 can hold.
+    var okmax = "MemTotal: 9007199254740991 kB\n";
+    var okmax_buf[64];
+    var okmax_len: i64 = strlen(okmax);
+    var okmax_i = 0;
+    while (okmax_i < okmax_len) {
+        store8(&okmax_buf + okmax_i, load8(okmax + okmax_i));
+        okmax_i = okmax_i + 1;
+    }
+    assert_eq(mihi_extract_meminfo_bytes(&okmax_buf, okmax_len, "MemTotal:", 9),
+      9223372036854774784,
+      "MIHI_MEM_KB_MAX still scales to bytes");
+
+    # ----- A-4: mihi_uname leaves no uninitialised bytes -------------
+    # Locks the invariant the zeroing provides. It does not reproduce
+    # the pre-fix fault, which needs a FAILING uname(2) — unreachable
+    # with a valid buffer pointer. What it does assert is that no byte
+    # of the caller's pre-poisoned buffer survives the call, so a field
+    # accessor can never hand back an unterminated cstring.
+    test_group("audit A-4 — mihi_uname zeroes the caller's buffer");
+
+    var puts[390];
+    var pi = 0;
+    while (pi < 390) { store8(&puts + pi, 170); pi = pi + 1; }   # 0xAA poison
+    var prc = mihi_uname(&puts);
+    assert(is_ok(prc) == 1, "uname succeeded on the test host");
+    var poison_left = 0;
+    var pj = 0;
+    while (pj < 390) {
+        if (load8(&puts + pj) == 170) { poison_left = poison_left + 1; }
+        pj = pj + 1;
+    }
+    assert_eq(poison_left, 0, "no 0xAA poison byte survives mihi_uname");
+    assert_eq(load8(&puts + UTS_SIZE - 1), 0, "last buffer byte is NUL");
+
+    # ----- D-3: single-quoted os-release values ----------------------
+    # os-release(5) permits single OR double quotes. Only double were
+    # stripped, so a single-quoted value came back WITH its quotes.
+    test_group("audit D-3 — os-release single-quoted values");
+
+    var sq = "PRETTY_NAME='Some Linux'\nID=some\n";
+    var sq_buf[64];
+    var sq_len: i64 = strlen(sq);
+    var sq_i = 0;
+    while (sq_i < sq_len) {
+        store8(&sq_buf + sq_i, load8(sq + sq_i));
+        sq_i = sq_i + 1;
+    }
+    var sq_start: i64 = mihi_find_osrelease_key(&sq_buf, sq_len, "PRETTY_NAME=", 12);
+    var sq_val = mihi_parse_osrelease_value(&sq_buf, sq_len, sq_start);
+    assert(sq_val != 0, "single-quoted value parsed");
+    assert_eq(streq(sq_val, "Some Linux"), 1,
+      "single quotes stripped, not returned as part of the value");
+
+    # A quote character inside the other quoting style stays literal —
+    # the closing delimiter is the one that opened the value.
+    var mixq = "PRETTY_NAME=\"it's fine\"\nID=x\n";
+    var mixq_buf[64];
+    var mixq_len: i64 = strlen(mixq);
+    var mixq_i = 0;
+    while (mixq_i < mixq_len) {
+        store8(&mixq_buf + mixq_i, load8(mixq + mixq_i));
+        mixq_i = mixq_i + 1;
+    }
+    var mixq_start: i64 = mihi_find_osrelease_key(&mixq_buf, mixq_len, "PRETTY_NAME=", 12);
+    var mixq_val = mihi_parse_osrelease_value(&mixq_buf, mixq_len, mixq_start);
+    assert_eq(streq(mixq_val, "it's fine"), 1,
+      "apostrophe inside a double-quoted value is literal");
+
+    # ----- Coverage gap found while auditing: key-prefix shadowing ----
+    # find_osrelease_key is line-anchored, so VERSION_ID= must not be
+    # able to satisfy a search for ID=. Previously untested.
+    test_group("host.cyr — VERSION_ID does not shadow ID");
+
+    var vid = "VERSION_ID=1\nID=arch\n";
+    var vid_buf[48];
+    var vid_len: i64 = strlen(vid);
+    var vid_i = 0;
+    while (vid_i < vid_len) {
+        store8(&vid_buf + vid_i, load8(vid + vid_i));
+        vid_i = vid_i + 1;
+    }
+    var vid_start: i64 = mihi_find_osrelease_key(&vid_buf, vid_len, "ID=", 3);
+    assert_eq(vid_start, 16, "ID= anchors to its own line, not inside VERSION_ID=");
+    var vid_val = mihi_parse_osrelease_value(&vid_buf, vid_len, vid_start);
+    assert_eq(streq(vid_val, "arch"), 1, "ID value is 'arch', not '1'");
+
     return assert_summary();
 }
 

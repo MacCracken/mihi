@@ -125,6 +125,20 @@ process-lifetime singleton is the natural mihi-side mirror.
   alternative-3 ("explicit `mihi_gpu_init` entry point") becomes the
   forward path.
 
+  **Amended 2026-08-23 (audit finding A-6).** That window now carries a
+  second passenger. Since 1.2.2, `_mihi_gpu_ensure` saves the caller's
+  `sakshi` log level, clamps it to `SK_WARN` for the duration of the
+  detect call, and restores it — so that mihi, a library, does not
+  write ai-hwaccel's `detect: profiles=N` line to a consumer's stderr.
+  Under the same interleaving described above the *level* can also be
+  left wrong: A saves INFO and clamps, B saves the clamped WARN, A
+  restores INFO, B restores WARN — and the process stays at WARN
+  permanently. Same precondition, same non-exposure today, and the same
+  fix: alternative-3 makes the whole first-call sequence explicit and
+  single-entry, which resolves both. Recorded here rather than in the
+  audit alone because this ADR is where a future reader will look for
+  what the singleton costs.
+
 - **Neutral** — the singleton is allocated via ai-hwaccel's `alloc()`,
   which routes through cyrius's bump allocator. The bump allocator
   has no `free` — every byte allocated during detection lives until

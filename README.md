@@ -42,7 +42,7 @@ which is a separate code path rather than a fallback chain.
 cyrius deps                                        # resolve stdlib + deps
 cyrius build programs/smoke.cyr build/mihi-smoke   # smoke binary
 ./build/mihi-smoke                                 # prints the full fact set, exit 0
-cyrius test tests/mihi.tcyr                        # 116 assertions
+cyrius test tests/mihi.tcyr                        # 137 assertions
 ```
 
 ## Consume

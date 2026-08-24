@@ -10,12 +10,19 @@
 #   - uptime:   /proc/uptime first whitespace-separated field, seconds
 #     with fractional precision. Kernel writes ~64 bytes — caller's
 #     scratch buffer of ~64 bytes is plenty.
-#   - distro:   /etc/os-release PRETTY_NAME (shell-style key=value with
-#     optional double-quoting). Falls back to ID when PRETTY_NAME is
-#     absent — the only fallback in mihi, justified because the
-#     freedesktop spec marks PRETTY_NAME as recommended-not-required
-#     and ID is the mandatory minimum. /etc/os-release is small (~1 kB
-#     in practice) so a 1 KiB scratch buffer is sufficient.
+#   - distro:   /etc/os-release PRETTY_NAME (shell-style key=value,
+#     values optionally single- OR double-quoted per the spec). Falls
+#     back to ID when PRETTY_NAME is absent — the only fallback in
+#     mihi. Its justification was corrected at the 2026-08-23 audit
+#     (finding D-2): os-release(5) marks PRETTY_NAME optional, and it
+#     marks ID optional too ("If not set, a default of ID=linux may be
+#     used") — so ID is NOT "the mandatory minimum every distro ships",
+#     as this comment used to claim. The fallback stands on weaker but
+#     still real ground: the two keys are the only ones that name the
+#     OS, PRETTY_NAME is what a human wants, and ID is what is left. A
+#     file carrying neither yields a null return, not a guess.
+#     /etc/os-release is small (~1 kB in practice) so a 1 KiB scratch
+#     buffer is sufficient.
 #
 # AGNOS-native: hostname will come from the boot-info struct alongside
 # the other uname facts; uptime from a future native clock primitive;
@@ -76,11 +83,8 @@ fn mihi_uptime_secs(buf, cap): i64 {
     return sysinfo_uptime(&si);
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
-    var fd = sys_open("/proc/uptime", O_RDONLY, 0);
-    if (fd < 0) { return 0 - 1; }
-    var n = sys_read(fd, buf, cap);
-    sys_close(fd);
-    if (n <= 0) { return 0 - 1; }
+    var n = _mihi_read_probe_file("/proc/uptime", buf, cap, MIHI_IO_WHOLE);
+    if (n < 0) { return 0 - 1; }
     return mihi_parse_uptime_secs(buf, n);
     #endif
 }
@@ -115,24 +119,40 @@ fn mihi_find_osrelease_key(buf, len, key, key_len): i64 {
 
 # Given an offset `start` pointing at the first byte of a value in an
 # os-release buffer, null-terminate the value in place and return a
-# cstring pointer to its first character. Handles the two shapes the
-# spec allows: `KEY="quoted value"` and `KEY=bare-token`. For quoted
-# values, the closing '"' is overwritten with NUL; for bare values,
-# the trailing '\n' (or EOF) is overwritten. Returns 0 if the value
-# is empty or unterminated.
+# cstring pointer to its first character. Handles the three shapes the
+# spec allows: `KEY="double quoted"`, `KEY='single quoted'`, and
+# `KEY=bare-token`. For a quoted value the matching closing quote is
+# overwritten with NUL; for a bare value the trailing '\n' (or EOF)
+# is. Returns 0 if the value is empty or unterminated.
 # Mutates `buf` (writes one NUL byte).
-# Source: freedesktop os-release(5) — values may be double-quoted;
-# bare tokens disallow shell metacharacters.
+#
+# Source: freedesktop os-release(5) — "Variable assignment values must
+# be enclosed in double or single quotes if they include spaces,
+# semicolons or other special characters outside of A-Z, a-z, 0-9."
+#
+# Single quotes were unhandled before 1.2.3 (audit finding D-3): a
+# distro shipping `PRETTY_NAME='Some Linux'` fell through to the bare
+# branch, which scans to the newline, so the probe returned the value
+# WITH its surrounding quotes still attached. Every mainstream distro
+# uses double quotes, which is why it went unnoticed — but the spec
+# permits both, so accepting only one is a conformance bug, and the
+# failure mode is a wrong string rather than an error.
+#
+# NOT handled, deliberately: the spec's backslash escaping ("Shell
+# special characters ($, quotes, backslash, backtick) must be escaped
+# with backslashes"). Un-escaping requires rewriting the value shorter
+# and in place, and no observed distro escapes inside PRETTY_NAME or
+# ID. Documented in docs/sources.md as a known limit rather than
+# silently unimplemented.
 fn mihi_parse_osrelease_value(buf, len, start): cstring {
     if (start >= len) { return 0; }
     var p = start;
     var v = p;
-    var quoted = 0;
-    if (load8(buf + p) == 34) {
-        quoted = 1;
+    var quote = load8(buf + p);
+    if (quote == 34 || quote == 39) {
         p = p + 1;
         v = p;
-        while (p < len && load8(buf + p) != 34) { p = p + 1; }
+        while (p < len && load8(buf + p) != quote) { p = p + 1; }
     } else {
         while (p < len && load8(buf + p) != 10) { p = p + 1; }
     }
@@ -143,12 +163,19 @@ fn mihi_parse_osrelease_value(buf, len, start): cstring {
 }
 
 # Read /etc/os-release into the caller-supplied `buf` (capacity `cap`,
-# recommend 1024 — file is typically ~500 bytes), parse PRETTY_NAME.
-# Falls back to ID when PRETTY_NAME is absent — the only fallback in
-# mihi, justified because the freedesktop spec marks PRETTY_NAME as
-# recommended-not-required and ID as the mandatory minimum every
-# distro must ship. Returns cstring ptr into `buf` (null-terminated
-# in place), or 0 (null) on open/read/parse failure.
+# recommend 1024 — file is typically ~500 bytes), parse PRETTY_NAME,
+# falling back to ID when PRETTY_NAME is absent (see the module header
+# for what that fallback does and does not rest on). Returns cstring
+# ptr into `buf` (null-terminated in place), or 0 (null) on open /
+# read / truncation / parse failure.
+#
+# os-release(5) says /etc/os-release "should be a relative symlink to
+# /usr/lib/os-release" — so this is the one probe whose path is
+# expected to be a symlink, which is why the read goes through
+# _mihi_read_probe_file's O_NONBLOCK open rather than O_NOFOLLOW: the
+# symlink is legitimate and must be followed, but a repointed one that
+# lands on a FIFO must not be allowed to hang the caller. mihi's first
+# consumer renders the login MOTD; a hang there is a login denial.
 # Source: man 5 os-release; freedesktop.org/software/systemd/man/os-release.html.
 fn mihi_distro(buf, cap): cstring {
     #ifdef CYRIUS_TARGET_AGNOS
@@ -157,11 +184,8 @@ fn mihi_distro(buf, cap): cstring {
     return "AGNOS";
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
-    var fd = sys_open("/etc/os-release", O_RDONLY, 0);
-    if (fd < 0) { return 0; }
-    var n = sys_read(fd, buf, cap);
-    sys_close(fd);
-    if (n <= 0) { return 0; }
+    var n = _mihi_read_probe_file("/etc/os-release", buf, cap, MIHI_IO_WHOLE);
+    if (n < 0) { return 0; }
     var start = mihi_find_osrelease_key(buf, n, "PRETTY_NAME=", 12);
     if (start < 0) {
         start = mihi_find_osrelease_key(buf, n, "ID=", 3);

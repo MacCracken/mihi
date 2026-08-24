@@ -30,8 +30,8 @@ read buffer (writes one NUL byte to terminate the value).
 
 | Probe             | Source                                      | Authority                                                                                                                                 | Notes |
 | ----------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ----- |
-| `mihi_cpu_count`  | `/sys/devices/system/cpu/online`            | `Documentation/admin-guide/cputopology.rst`; kernel `kernel/cpu.c::cpu_online_mask` printed via `%*pbl` format                            | Parses comma-separated ranges (`"0-15"`, `"0-3,5-7"`, `"0"`). Bare `N` treated as `N-N`. 64-byte stack scratch is plenty (max range string is short). |
-| `mihi_cpu_model`  | `/proc/cpuinfo` first `model name` value    | man 5 proc; kernel `fs/proc/cpuinfo.c` → arch `show_cpuinfo()` (e.g. `arch/x86/kernel/cpu/proc.c`)                                        | Line-anchored search for `"\nmodel name"` pins us to CPU 0's block — first-block-only honours "one source per fact" on big.LITTLE. Caller supplies 8 kB scratch. |
+| `mihi_cpu_count`  | `/sys/devices/system/cpu/online`            | `Documentation/admin-guide/cputopology.rst`; kernel `kernel/cpu.c::cpu_online_mask` printed via `%*pbl` format                            | Parses comma-separated ranges (`"0-15"`, `"0-3,5-7"`, `"0"`). Bare `N` treated as `N-N`. Scratch grew 64 → 1024 bytes at 1.2.3 (audit A-1): `%*pbl` emits a *range list*, so a box with many offline CPUs produces a long value that 64 bytes cut mid-range — silently undercounting. Total is capped at `MIHI_CPU_MAX` (2^20). |
+| `mihi_cpu_model`  | `/proc/cpuinfo` first `model name` value    | man 5 proc; kernel `fs/proc/cpuinfo.c` → arch `show_cpuinfo()` (e.g. `arch/x86/kernel/cpu/proc.c`)                                        | Line-anchored search for `"\nmodel name"` pins us to CPU 0's block — first-block-only honours "one source per fact" on big.LITTLE. Caller supplies 8 kB scratch, which is *CPU 0's block fits*, not *the file fits*: /proc/cpuinfo is one block per logical CPU and measures 26 kB on a 16-thread host. The only read in mihi using `MIHI_IO_PREFIX`. **x86 only** — arm64's `c_show()` (`arch/arm64/kernel/cpuinfo.c`) emits no `model name` line at all, so this returns 0 on aarch64 Linux and consumers must render null as unknown (audit D-1). |
 
 ## Slice C — /proc/meminfo (M1, v0.2.0)
 
@@ -45,7 +45,7 @@ Field anchor accepts file-start (MemTotal is the first line) and
 | Probe             | Source                                | Authority                                                                                  | Notes |
 | ----------------- | ------------------------------------- | ------------------------------------------------------------------------------------------ | ----- |
 | `mihi_mem_total`  | `/proc/meminfo` `MemTotal:`           | man 5 proc; kernel `fs/proc/meminfo.c::meminfo_proc_show()`                                 | Always present on Linux; file-start anchored. Caller supplies 4 kB scratch (meminfo ≈ 1.5 kB). |
-| `mihi_mem_free`   | `/proc/meminfo` `MemAvailable:`       | kernel commit 34e431b0ae39 (3.14+); `fs/proc/meminfo.c`                                     | Picked over `MemFree:` because MemAvailable counts reclaimable cache/slab — the kernel's own "actually usable" estimate that monitoring tools surface as "free". |
+| `mihi_mem_free`   | `/proc/meminfo` `MemAvailable:`       | kernel commit 34e431b0ae39 (3.14+); `fs/proc/meminfo.c`                                     | Picked over `MemFree:` because MemAvailable counts reclaimable cache/slab — the kernel's own "actually usable" estimate that monitoring tools surface as "free". Linux 3.14+; absent on older kernels → `0 - 1`. **AGNOS reports a different question**: §4.4 `freeram` via `sysinfo_free_memory()` is plain free, not free+reclaimable (arm added at 1.2.3, audit A-5). |
 
 ## Slice D — host-identity probes (M2, v0.3.0)
 
@@ -62,7 +62,30 @@ sources.
 | ------------------ | --------------------------------------------------- | ---------------------------------------------------------------------------------------- | ----- |
 | `mihi_hostname`    | `uname(2)` → `utsname.nodename`                     | man 2 uname; `<asm-generic/utsname.h>`; kernel UTS namespace set by `sethostname(2)`     | 65-byte buffer at offset 65. Reports `"(none)"` on boxes without a configured hostname. |
 | `mihi_uptime_secs` | `/proc/uptime` first whitespace-separated field     | man 5 proc; kernel `fs/proc/uptime.c::uptime_proc_show()`                                | Format `"%lu.%02lu %lu.%02lu\n"` — wall-clock uptime then summed idle. mihi drops the fractional part. 64-byte scratch (file is ~32 bytes). |
-| `mihi_distro`      | `/etc/os-release` `PRETTY_NAME` (fallback `ID`)     | man 5 os-release; freedesktop.org/software/systemd/man/os-release.html                   | Shell-style key=value; values may be double-quoted. Caller supplies 1 KiB scratch; probe null-terminates the value in place. Only probe with a fallback — same authority, recommended→required gradient. |
+| `mihi_distro`      | `/etc/os-release` `PRETTY_NAME` (fallback `ID`)     | man 5 os-release; freedesktop.org/software/systemd/man/os-release.html                   | Shell-style key=value; values may be single- OR double-quoted (both handled since 1.2.3, audit D-3). Caller supplies 1 KiB scratch; probe null-terminates the value in place. Only probe with a fallback — and the spec makes **both** keys optional (`ID=linux` / `PRETTY_NAME="Linux"` are documented defaults), so the fallback rests on "these are the only two keys that name the OS", not on ID being mandatory (audit D-2). **Known limit**: the spec's backslash escaping is not un-escaped; no observed distro escapes inside PRETTY_NAME or ID. |
+
+## The shared read path (1.2.3)
+
+Every `/proc` and `/sys` citation above is reached through one
+function, `_mihi_read_probe_file` in `src/io.cyr`
+([ADR 0003](adr/0003-shared-probe-read.md)), rather than through a
+per-probe `open / read / close`. What that means for a reader of this
+table:
+
+- A file larger than the caller's buffer is an **error**, not a short
+  parse — except for `/proc/cpuinfo`, the one `MIHI_IO_PREFIX` read,
+  where a prefix is what the probe wants. Before 1.2.3 an undersized
+  buffer produced a plausible wrong value with no error (audit A-1).
+- Reads are looped, so a short `read(2)` is not mistaken for EOF, and
+  `-EINTR` is retried (bounded at 8) rather than reported as "fact
+  unavailable".
+- The open carries `O_CLOEXEC` and `O_NONBLOCK`. `O_NONBLOCK` is there
+  for `/etc/os-release` specifically: os-release(5) says it *should* be
+  a symlink, so `O_NOFOLLOW` is not available, and a symlink repointed
+  at a FIFO would otherwise hang the caller — which for `iam` means the
+  login path.
+- Not used on AGNOS: every probe takes a `sysinfo(2)` / CPUID /
+  constant path there.
 
 ## Slice E — accelerator-identity probes (M3, v0.4.0)
 

@@ -304,6 +304,7 @@ jobs:
                    docs/development/roadmap.md docs/development/state.md \
                    docs/adr/0001-shared-uts-buffer.md \
                    docs/adr/0002-gpu-singleton-cache.md \
+                   docs/adr/0003-shared-probe-read.md \
                    docs/sources.md docs/benchmarks.md \
                    benches/probe_paths.bcyr benches/parsers.bcyr \
                    benches/gpu_paths.bcyr \

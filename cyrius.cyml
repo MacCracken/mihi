@@ -16,10 +16,14 @@ output = "build/mihi-smoke"
 [lib]
 # Domain modules concatenated by `cyrius distlib` into dist/mihi.cyr —
 # the single-file bundle consumed via `include "lib/mihi.cyr"` after
-# `cyrius deps`. Order matters: types first, then probes in dependency
-# order. gpu.cyr is last because it depends on ai-hwaccel symbols that
-# the bundle's consumer is expected to have already included.
-modules = ["src/types.cyr", "src/cpu.cyr", "src/mem.cyr", "src/kernel.cyr", "src/host.cyr", "src/gpu.cyr"]
+# `cyrius deps`. Order matters: types first, then io.cyr (the shared
+# /proc + /sys read path — cpu/mem/host all call into it, so it must
+# precede them), then probes in dependency order. gpu.cyr is last
+# because it depends on ai-hwaccel symbols that the bundle's consumer
+# is expected to have already included. io.cyr joined the set at 1.2.3;
+# see docs/adr/0003-shared-probe-read.md for why a sixth module beat
+# duplicating the hardened read four times.
+modules = ["src/types.cyr", "src/io.cyr", "src/cpu.cyr", "src/mem.cyr", "src/kernel.cyr", "src/host.cyr", "src/gpu.cyr"]
 
 [deps]
 # mihi's identity probes (kernel_name / kernel_version / cpu_arch / hostname)

@@ -14,10 +14,30 @@
 #   Caller allocates uts[UTS_SIZE] on its stack, calls mihi_uname(uts)
 #   once, then reads whichever fields it wants. mihi owns no state.
 
-# Fill `uts` (must point to at least UTS_SIZE = 390 bytes) with the
-# current kernel's utsname struct. Returns Result: Ok(uts) or Err.
+# Fill `uts` (must point to at least UTS_SIZE bytes — 390 on Linux,
+# 64 on AGNOS) with the current kernel's utsname struct. Returns
+# Result: Ok(uts) or Err.
 # Source: uname(2) — Linux kernel arch/*/kernel/sys.c::sys_newuname.
+#
+# Hardened at the 2026-08-23 audit (finding A-4): the buffer is zeroed
+# BEFORE the syscall. The four field accessors (mihi_kernel_name /
+# mihi_kernel_version / mihi_cpu_arch / mihi_hostname) are pure pointer
+# math and, by the ADR 0001 contract, do not verify that this call
+# succeeded. A caller that ignores the Result and reads a field after a
+# failed uname was therefore handed a pointer into UNINITIALISED STACK
+# and a "cstring" with no terminator in it — so the consumer's
+# println() walks off the buffer. That is the one place in mihi where a
+# caller mistake turned into an out-of-bounds read rather than a wrong
+# value. Zeroing first costs UTS_SIZE byte-stores once per process and
+# converts the worst case from an OOB walk into an empty string, which
+# is exactly what the "zero-init uts" test already asserts is safe.
+# lib/sys.cyr's macOS arm zeroes for the same reason.
 fn mihi_uname(uts): i64 {
+    var z = 0;
+    while (z < UTS_SIZE) {
+        store8(uts + z, 0);
+        z = z + 1;
+    }
     # sys_uname (lib/sys.cyr) returns raw 0 / -errno; wrap as Result for callers
     # that check is_ok / is_err_result (iam). The UTS_* offsets resolve
     # target-correct from sys.cyr — AGNOS: sysname@0 / nodename@16 / release@32 /

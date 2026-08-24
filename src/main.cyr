@@ -6,6 +6,7 @@
 #
 # Public surface:
 #   types.cyr   — MihiInfo struct, field constants
+#   io.cyr      — _mihi_read_probe_file, the one /proc + /sys read path
 #   cpu.cyr     — mihi_cpu_model, mihi_cpu_count, mihi_cpu_arch
 #   mem.cyr     — mihi_mem_total, mihi_mem_free
 #   kernel.cyr  — mihi_kernel_name, mihi_kernel_version
@@ -15,6 +16,7 @@
 #                 2.3.18 registry_detect_no_exec())
 
 include "src/types.cyr"
+include "src/io.cyr"
 include "src/cpu.cyr"
 include "src/mem.cyr"
 include "src/kernel.cyr"

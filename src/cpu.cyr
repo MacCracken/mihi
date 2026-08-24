@@ -30,6 +30,22 @@ fn mihi_cpu_arch(uts): cstring {
 
 # ----- Slice B — /sys/devices/system/cpu/online --------------------
 
+# MIHI_CPU_MAX — sanity ceiling on a parsed logical-CPU count. Linux's
+# CONFIG_NR_CPUS tops out at 8192 (x86_64 MAXSMP) / 16384 (arm64); 2^20
+# is two orders of magnitude clear of both, so nothing real trips it and
+# only corrupt input does. See mihi_parse_cpu_range.
+#
+# MIHI_CPU_ONLINE_CAP — read capacity for /sys/devices/system/cpu/online,
+# mirrored by the `var online[1024]` declaration in mihi_cpu_count (array
+# sizes take literals). The file is "0-15" on a normal box, but the
+# kernel emits a %*pbl range list, so a machine with many offline CPUs
+# produces a long comma-separated list. 64 bytes (the pre-1.2.3 size)
+# truncated such a list mid-range and returned a plausible wrong count.
+enum MihiCpuLimit {
+    MIHI_CPU_MAX = 1048576;
+    MIHI_CPU_ONLINE_CAP = 1024;
+}
+
 # Parse a CPU range string like "0-15" or "0-3,5-7" or "0" into a
 # logical-CPU count. Sums (hi-lo+1) per comma-separated range; bare
 # "N" is treated as N-N. Whitespace, newlines, and commas are
@@ -44,6 +60,15 @@ fn mihi_cpu_arch(uts): cstring {
 #   - Coerces descending ranges (hi < lo, e.g. "10-5") to single-CPU
 #     ranges. Real kernel output is always ascending; this defends
 #     against a corrupted /sys file producing a negative addend.
+#
+# Defensive (2026-08-23 audit A-2): the per-range digit cap bounds each
+# *addend* to < 10^18, but `total` accumulated without any bound — ten
+# such ranges overflow i64 and the count comes back negative. The 64-byte
+# read buffer used to make that unreachable by arithmetic; A-1 grew the
+# buffer to 1024, so it stopped being unreachable. Any total above
+# MIHI_CPU_MAX (2^20 — two orders of magnitude past Linux's 8192-CPU
+# CONFIG_NR_CPUS ceiling) means corrupt input, and the function reports
+# malformed input the way it already does elsewhere: return 0.
 fn mihi_parse_cpu_range(buf, len): i64 {
     var total = 0;
     var i = 0;
@@ -86,18 +111,30 @@ fn mihi_parse_cpu_range(buf, len): i64 {
         # Coerce descending ranges (audit C-1).
         if (hi < lo) { hi = lo; }
         total = total + (hi - lo + 1);
+        # Overflow guard (audit A-2). Checked every iteration, so `total`
+        # can never climb far enough to wrap: each addend is < 10^18 and
+        # the guard trips at 2^20, so the largest value `total` can hold
+        # is ~10^18 — three orders of magnitude below i64 max.
+        if (total > MIHI_CPU_MAX) {
+            total = 0;
+            done = 1;
+        }
     }
     return total;
 }
 
 # Count logical CPUs from /sys/devices/system/cpu/online.
-# Returns logical CPU count, or 0 - 1 on open/read error.
-# Source: kernel/cpu.c::cpu_online_mask exported via sysfs.
+# Returns logical CPU count, or 0 - 1 on open/read/truncation error.
+# Source: kernel/cpu.c::cpu_online_mask exported via sysfs, formatted
+# with %*pbl (Documentation/admin-guide/cputopology.rst).
 fn mihi_cpu_count(): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
     # AGNOS has no /sys — read the enumerated CPU count from sysinfo#35 (§4.4 `cpus`
-    # @ SI_CPUS=32; was a stale hardcoded 1). info[40] = the 40-byte §4.4 struct.
-    var info[40];
+    # @ SI_CPUS=32; was a stale hardcoded 1). The buffer is sized 120 to match every
+    # other sysinfo call site in mihi rather than the 40 bytes AGNOS §4.4 currently
+    # needs: sys_sysinfo passes its own length to the kernel, so the extra bytes cost
+    # one stack frame and remove a size that would have to be revisited if §4.4 grows.
+    var info[120];
     var rc = sys_sysinfo(&info);
     if (rc != 0) { return 0 - 1; }
     var n = load64(&info + SI_CPUS);
@@ -105,13 +142,10 @@ fn mihi_cpu_count(): i64 {
     return n;
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
-    var buf[64];
-    var fd = sys_open("/sys/devices/system/cpu/online", O_RDONLY, 0);
-    if (fd < 0) { return 0 - 1; }
-    var n = sys_read(fd, &buf, 64);
-    sys_close(fd);
-    if (n <= 0) { return 0 - 1; }
-    return mihi_parse_cpu_range(&buf, n);
+    var online[1024];   # MIHI_CPU_ONLINE_CAP
+    var n = _mihi_read_probe_file("/sys/devices/system/cpu/online", &online, MIHI_CPU_ONLINE_CAP, MIHI_IO_WHOLE);
+    if (n < 0) { return 0 - 1; }
+    return mihi_parse_cpu_range(&online, n);
     #endif
 }
 
@@ -170,7 +204,18 @@ fn mihi_parse_cpu_model(buf, len): cstring {
 # host against /proc/cpuinfo before it ever ships to agnos.
 
 # Fill buf[0..47] with the raw 48-byte CPUID brand string. x86 only.
-# Returns 1 on x86, 0 otherwise. `buf` MUST be >= 48 bytes.
+# Returns 1 on x86, 0 otherwise.
+#
+# ⚠ `buf` MUST be >= 48 bytes, and this function CANNOT CHECK THAT — it
+# takes no capacity parameter and stores 48 bytes unconditionally. The
+# only in-tree caller, mihi_cpu_model_cpuid, rejects `cap < 49` before
+# reaching here. Audit finding A-7 (2026-08-23): the name carries no
+# leading underscore, so this is on the bundle's public surface and a
+# consumer could call it directly with a short buffer. Adding a `cap`
+# parameter is a signature change and the API has been frozen since
+# 1.0.0, so it is a v2.0 item; until then this comment is the contract.
+# The 48 bytes come from the `cpuid` instruction, not from any file, so
+# nothing attacker-controlled reaches the store.
 #
 # `param_load(rdi, 0)` loads param 0 (`buf`) into rdi with the slot offset resolved
 # at EMIT TIME (cyrius 6.0.67+) — prologue-drift-proof, the sigil `_sha_ni_cpuid_probe`
@@ -239,13 +284,32 @@ fn mihi_cpu_model_cpuid(buf, cap): cstring {
 }
 
 # Read /proc/cpuinfo into the caller-supplied `buf` (capacity `cap`,
-# recommend 8192 — first-block "model name" line lands well within).
-# Returns cstring ptr into `buf` to the null-terminated model string,
-# or 0 (null) on open/read/parse failure.
-# Source: fs/proc/cpuinfo.c → arch-specific show_cpuinfo() (e.g.
-# arch/x86/kernel/cpu/proc.c). The "model name" field is the human
-# brand string from CPUID brand-string leaves (x86) or device-tree
-# /cpus/cpu@N/compatible (aarch64).
+# recommend 8192). Returns cstring ptr into `buf` to the null-terminated
+# model string, or 0 (null) on open/read/parse failure.
+#
+# 8192 is NOT "the file fits" and never was — /proc/cpuinfo is one block
+# per logical CPU and measures 26 kB on a 16-thread box, growing with
+# core count. It is "CPU 0's block fits", which is all this probe wants
+# (see mihi_parse_cpu_model on why it anchors to the first block). So
+# this is the one read in mihi that passes MIHI_IO_PREFIX: a short read
+# is the expected case, not an error. That is safe only because the
+# parser cannot return a partial value — if the buffer ends before the
+# line's closing newline it returns 0, never half a brand string.
+# Source: fs/proc/cpuinfo.c → arch-specific show_cpuinfo(), i.e.
+# arch/x86/kernel/cpu/proc.c. The "model name" field is the human brand
+# string from CPUID brand-string leaves 0x80000002/3/4.
+#
+# ⚠ x86 only, and that is a property of the kernel, not of this parser.
+# arm64's c_show() (arch/arm64/kernel/cpuinfo.c) emits "processor",
+# "BogoMIPS", "Features", "CPU implementer", "CPU architecture",
+# "CPU variant", "CPU part", "CPU revision" — and no "model name" line
+# at all. So on aarch64 Linux this probe returns 0, and a consumer must
+# render null as "unknown" rather than assume a string. (Corrected at
+# the 2026-08-23 audit, finding D-1: the comment here previously cited
+# a device-tree /cpus/cpu@N/compatible source for aarch64 that the
+# kernel does not in fact print into /proc/cpuinfo.) Sourcing the arm64
+# brand from the device tree is tracked in roadmap.md, not done here —
+# it is a second source for one fact and needs hardware to verify.
 fn mihi_cpu_model(buf, cap): cstring {
     #ifdef CYRIUS_TARGET_AGNOS
     # AGNOS has no /proc — read the brand straight from CPUID (the same x86 datum
@@ -253,11 +317,8 @@ fn mihi_cpu_model(buf, cap): cstring {
     return mihi_cpu_model_cpuid(buf, cap);
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
-    var fd = sys_open("/proc/cpuinfo", O_RDONLY, 0);
-    if (fd < 0) { return 0; }
-    var n = sys_read(fd, buf, cap);
-    sys_close(fd);
-    if (n <= 0) { return 0; }
+    var n = _mihi_read_probe_file("/proc/cpuinfo", buf, cap, MIHI_IO_PREFIX);
+    if (n < 0) { return 0; }
     return mihi_parse_cpu_model(buf, n);
     #endif
 }

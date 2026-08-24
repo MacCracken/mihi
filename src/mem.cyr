@@ -13,6 +13,15 @@
 # swapping — what every monitoring tool reports as "free." See
 # kernel commit 34e431b0ae39.
 
+# MIHI_MEM_KB_MAX — largest kB value that survives the * 1024 scaling
+# without wrapping i64: floor(2^63 - 1 / 1024) = 2^53 - 1, which is
+# ~9 EiB of RAM. Anything at or under this is scaled; anything over it
+# is corrupt input and reported as an error rather than wrapped.
+# See mihi_extract_meminfo_bytes and the 2026-08-23 audit, finding A-3.
+enum MihiMemLimit {
+    MIHI_MEM_KB_MAX = 9007199254740991;
+}
+
 # Find a line-anchored field in `buf`. `field` is the bare field
 # name with trailing colon (e.g. "MemTotal:"). The match position
 # must either be at offset 0 (file-start) or be preceded by '\n'.
@@ -68,11 +77,26 @@ fn mihi_parse_meminfo_kb(buf, len, start): i64 {
 }
 
 # Convenience: find field, parse kB, return bytes (kB * 1024) or 0 - 1.
+#
+# The kB unit is a misnomer the kernel is stuck with for ABI reasons:
+# proc_meminfo(5) states the values are really KiB (1024 B), not kB
+# (1000 B), and that the label is not corrected because programs parse
+# it. So the scale factor is 1024 and that is deliberate.
+#
+# Defensive (2026-08-23 audit A-3): the 0.6.0 M-1 fix capped the digit
+# accumulator at 18 digits, which bounds `kb` below 10^18 — but 10^18
+# * 1024 is ~1.02e21, four times i64 max. So the guard that made the
+# *accumulator* safe left the *scale* able to wrap, and a wrapped
+# result can come back NEGATIVE — straight past a consumer's
+# `total >= 0` sanity check and into a rendered figure. Reject rather
+# than saturate: a value that large is not a truncated fact, it is a
+# corrupt one, and "one source per fact … return error" applies.
 fn mihi_extract_meminfo_bytes(buf, len, field, field_len): i64 {
     var start = mihi_find_meminfo_field(buf, len, field, field_len);
     if (start < 0) { return 0 - 1; }
     var kb = mihi_parse_meminfo_kb(buf, len, start);
     if (kb < 0) { return 0 - 1; }
+    if (kb > MIHI_MEM_KB_MAX) { return 0 - 1; }
     return kb * 1024;
 }
 
@@ -89,11 +113,8 @@ fn mihi_mem_total(buf, cap): i64 {
     return sysinfo_total_memory(&si);
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
-    var fd = sys_open("/proc/meminfo", O_RDONLY, 0);
-    if (fd < 0) { return 0 - 1; }
-    var n = sys_read(fd, buf, cap);
-    sys_close(fd);
-    if (n <= 0) { return 0 - 1; }
+    var n = _mihi_read_probe_file("/proc/meminfo", buf, cap, MIHI_IO_WHOLE);
+    if (n < 0) { return 0 - 1; }
     return mihi_extract_meminfo_bytes(buf, n, "MemTotal:", 9);
     #endif
 }
@@ -101,13 +122,31 @@ fn mihi_mem_total(buf, cap): i64 {
 # Read /proc/meminfo, parse MemAvailable, return available RAM in
 # bytes. MemAvailable is the kernel's estimate of allocatable memory
 # (accounts for reclaimable cache + slab); preferred over MemFree
-# for "how much can I actually use" queries.
+# for "how much can I actually use" queries. Available since Linux
+# 3.14 — on an older kernel the field is absent and this returns 0 - 1.
 # Source: kernel commit 34e431b0ae39, fs/proc/meminfo.c.
 fn mihi_mem_free(buf, cap): i64 {
-    var fd = sys_open("/proc/meminfo", O_RDONLY, 0);
-    if (fd < 0) { return 0 - 1; }
-    var n = sys_read(fd, buf, cap);
-    sys_close(fd);
-    if (n <= 0) { return 0 - 1; }
+    #ifdef CYRIUS_TARGET_AGNOS
+    # Was the one probe with no AGNOS arm at all: it fell through to a
+    # Linux `open("/proc/meminfo")` that the sovereign kernel cannot
+    # satisfy, so it always returned 0 - 1 there. The 1.1.2 note called
+    # that "no sysinfo equivalent", which stopped being true when
+    # lib/sys.cyr grew the AGNOS §4.4 layout — freeram sits at
+    # SI_FREERAM (+16) and sysinfo_free_memory() reads it per-target.
+    #
+    # ⚠ Semantics differ from the Linux arm and that is not hidden:
+    # Linux reports MemAvailable (free + reclaimable), AGNOS §4.4
+    # reports plain free. It is the closest fact the sovereign kernel
+    # publishes, and a real number beats a permanent error — but a
+    # consumer comparing the two across targets is comparing two
+    # different questions. Separate code path, not a fallback chain.
+    var si[120];
+    if (sys_sysinfo(&si) != 0) { return 0 - 1; }
+    return sysinfo_free_memory(&si);
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    var n = _mihi_read_probe_file("/proc/meminfo", buf, cap, MIHI_IO_WHOLE);
+    if (n < 0) { return 0 - 1; }
     return mihi_extract_meminfo_bytes(buf, n, "MemAvailable:", 13);
+    #endif
 }

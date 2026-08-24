@@ -247,6 +247,19 @@ Keeps future contributors from adding to v1.0 by accident.
   `sys_uname` / `sys_sysinfo` and dropped `[deps.agnosys]` entirely; `mihi_uname`
   wraps the raw `0/-errno` return as a `Result`, so `is_err_result` consumers were
   unaffected. iam's matching drop unblocked at the same cut.
+- [ ] **arm64 CPU-brand source.** `mihi_cpu_model` reads
+  `/proc/cpuinfo`'s `model name`, which arm64 Linux does not emit —
+  `c_show()` in `arch/arm64/kernel/cpuinfo.c` prints `CPU implementer` /
+  `CPU part` / `CPU revision` and no brand line — so the probe returns
+  null on every aarch64 Linux box. Surfaced as documentation finding D-1
+  in the [2026-08-23 audit](../audit/2026-08-23-audit.md); the citation
+  is corrected, the gap is not closed. The candidate source is the
+  device tree (`/proc/device-tree/model` or
+  `/sys/firmware/devicetree/base/model`), which would be a *second*
+  source for one fact — an AGNOS/CPUID-style separate code path, not a
+  fallback chain — and it cannot be verified without arm64 hardware.
+  **Unblocker**: an arm64 box to test on. Until then, consumers must
+  render a null model as "unknown"; `iam` and `chakshu` already do.
 - [ ] **`BACKEND_AGNOS_GPU` detector.** ai-hwaccel 2.3.x reserves the backend id and
   an `ACCEL_AGNOS_GPU` accelerator type, and `builder_no_exec()` already sets its
   bit — but upstream ships no detector dispatch for it, so it is inert. When one

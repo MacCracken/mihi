@@ -1,0 +1,149 @@
+# mihi/io — the single file-read path every /proc and /sys probe uses.
+#
+# Before 1.2.3 each probe hand-rolled `open / one read / close`, five
+# times over, and each copy carried the same three defects:
+#
+#   1. **Silent truncation.** A single `sys_read(fd, buf, cap)` that
+#      fills the buffer is indistinguishable from one that reached EOF.
+#      Truncating `MemTotal:  61192260 kB` mid-digits does not fail —
+#      it returns a *plausible smaller number*. A wrong fact is worse
+#      than an error for a library whose whole job is reporting facts,
+#      and CLAUDE.md's "one source per fact … if it's not present,
+#      return error" says so directly.
+#   2. **Short reads treated as EOF.** `read(2)` is permitted to return
+#      fewer bytes than requested. seq_file-backed /proc and kernfs
+#      -backed /sys files do not do this in practice for a large-enough
+#      count, but the parsers were relying on an unwritten guarantee
+#      rather than on looping.
+#   3. **`-EINTR` treated as a hard failure.** A signal arriving during
+#      the read made the probe report "no such fact". For `iam` on the
+#      login path that is a spurious blank field.
+#
+# This module fixes all three once. It also adds two open flags the
+# hand-rolled copies lacked:
+#
+#   - **`O_NONBLOCK`** — `/etc/os-release` is, per os-release(5), a
+#     symlink (`/etc/os-release` → `/usr/lib/os-release`). A symlink is
+#     a thing someone can repoint. If it ever resolves to a FIFO, a
+#     blocking `open(2)` hangs the calling process — and mihi's first
+#     consumer runs on the *login* path, so a hang there is a login
+#     denial. With `O_NONBLOCK` the open returns immediately and the
+#     subsequent read fails `-EAGAIN`, which becomes an honest probe
+#     error. On regular, procfs, and sysfs files the flag is inert.
+#     `O_NOFOLLOW` would be the blunter answer and is wrong here: it
+#     would reject the legitimate symlink the spec mandates.
+#   - **`O_CLOEXEC`** — the descriptor is closed a few instructions
+#     later, so the window is tiny, but a consumer that forks from
+#     another thread mid-probe would otherwise leak it into the child.
+#     Free hygiene.
+#
+# Not used on AGNOS. Every probe takes a sysinfo(2) / CPUID / constant
+# path on the sovereign target (there is no procfs to read), so the body
+# is `#ifndef CYRIUS_TARGET_AGNOS` and the AGNOS arm returns a plain
+# error. That is load-bearing rather than tidy: `O_CLOEXEC` and
+# `O_NONBLOCK` are *not defined* on the AGNOS target (lib/io.cyr's
+# agnos-only O_* set stops at `O_EXCL`), so the flags have to be removed
+# by the preprocessor, not merely left unreached.
+
+# Read modes, and return codes as negative magnitudes (the "no negative
+# literals" convention — the function returns `0 - MIHI_IO_FAIL`).
+#
+#   MIHI_IO_WHOLE   the caller needs the entire file; a file larger
+#                   than `cap` is an error, because every parser that
+#                   asks for WHOLE extracts a value that a cut could
+#                   silently shorten.
+#   MIHI_IO_PREFIX  the caller only needs the head of the file and its
+#                   parser is truncation-safe. Exactly one probe:
+#                   mihi_cpu_model, which wants CPU 0's block out of a
+#                   /proc/cpuinfo that is 26 kB on a 16-thread box and
+#                   grows with core count — so "the whole file fits" was
+#                   never the contract there, and its parser returns
+#                   null rather than a partial value when the buffer
+#                   ends mid-line. Do not reach for PREFIX to paper over
+#                   an undersized buffer.
+#
+#   MIHI_IO_FAIL    open failed, read failed, or the file was empty.
+#   MIHI_IO_TRUNC   WHOLE was asked for and the file did not fit in
+#                   `cap`. Distinct from FAIL because it is the caller's
+#                   buffer that is wrong, not the system; probes map
+#                   both onto their own documented sentinel, but the
+#                   tests assert the split.
+enum MihiIoMode {
+    MIHI_IO_WHOLE = 0;
+    MIHI_IO_PREFIX = 1;
+}
+enum MihiIoStatus {
+    MIHI_IO_FAIL = 1;
+    MIHI_IO_TRUNC = 2;
+    MIHI_IO_EINTR_MAX = 8;
+}
+
+# Read a small pseudo-file into `buf` (capacity `cap`).
+#
+# Returns the byte count on success (always >= 1), `0 - MIHI_IO_FAIL`
+# if the file could not be opened or read or was empty, and
+# `0 - MIHI_IO_TRUNC` if `mode` is MIHI_IO_WHOLE and the file did not
+# fit in `cap`.
+#
+# Truncation is detected rather than assumed: when the read loop fills
+# the buffer exactly, one more single-byte read decides whether that was
+# EOF or a longer file. That costs one extra syscall only in the case
+# that would otherwise return a wrong answer, and it is skipped
+# entirely under MIHI_IO_PREFIX.
+#
+# `-EINTR` is retried up to MIHI_IO_EINTR_MAX times, then reported as a
+# failure — bounded, so a pathological signal storm cannot spin here.
+# Every other negative return fails immediately, `-EAGAIN` included:
+# that is the O_NONBLOCK FIFO case above, and "would block" on a file
+# that is supposed to be a 400-byte text file is not a retry, it is a
+# wrong file.
+#
+# Still a pure read: open/read/close of a compile-time-constant path,
+# no mutation of anything on the system, no process spawned.
+fn _mihi_read_probe_file(path, buf, cap, mode): i64 {
+    #ifdef CYRIUS_TARGET_AGNOS
+    return 0 - MIHI_IO_FAIL;
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    if (cap <= 0) { return 0 - MIHI_IO_FAIL; }
+    var fd = sys_open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK, 0);
+    if (fd < 0) { return 0 - MIHI_IO_FAIL; }
+    var total = 0;
+    var eintr = 0;
+    var failed = 0;
+    var done = 0;
+    var n = 0;
+    var probe[8];
+    var extra = 0;
+    while (done == 0) {
+        n = sys_read(fd, buf + total, cap - total);
+        if (n < 0) {
+            if (n == 0 - EINTR && eintr < MIHI_IO_EINTR_MAX) {
+                eintr = eintr + 1;
+            } else {
+                failed = 1;
+                done = 1;
+            }
+            continue;
+        }
+        if (n == 0) {
+            done = 1;
+            continue;
+        }
+        total = total + n;
+        if (total >= cap) { done = 1; }
+    }
+    if (failed == 1) {
+        sys_close(fd);
+        return 0 - MIHI_IO_FAIL;
+    }
+    # Buffer full — was that EOF, or is there more file behind it?
+    if (total >= cap && mode == MIHI_IO_WHOLE) {
+        extra = sys_read(fd, &probe, 1);
+    }
+    sys_close(fd);
+    if (extra > 0) { return 0 - MIHI_IO_TRUNC; }
+    if (total <= 0) { return 0 - MIHI_IO_FAIL; }
+    return total;
+    #endif
+}

@@ -4,6 +4,159 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.2.3] — 2026-08-23
+
+**P(-1) audit / hardening sweep.** Second full audit of the probe surface (the
+first was 2026-05-19, pre-0.6.0). Six code fixes, four documentation corrections,
+one new `[lib]` module with an ADR behind it, and 21 new regression assertions —
+**116 → 137**. Probe API unchanged; every signature, return shape and error
+sentinel is the same as 1.0.0. Full write-up, including the CVE research and the
+before/after benchmark, in [`docs/audit/2026-08-23-audit.md`](docs/audit/2026-08-23-audit.md).
+
+Two things in here are worth a consumer's attention. **A-4** is the only finding
+across both audits whose failure mode was a memory-safety event rather than a
+wrong number. And **`mihi_cpu_model` got 126% slower** — deliberately; it was
+reading 3288 bytes of the 8192 its caller asked for, and now reads all of it.
+
+### Added
+
+- **`src/io.cyr`** — a sixth `[lib]` module holding `_mihi_read_probe_file`, the
+  one `/proc` + `/sys` read path. The same `open / one read / close` block had
+  been pasted into six probes, carrying the same three defects in each copy, so
+  the fix is a module rather than six edits. Module-shape changes need an ADR per
+  CLAUDE.md: [ADR 0003](docs/adr/0003-shared-probe-read.md), which also records
+  why `types.cyr` and `cpu.cyr` were the wrong homes and why the stdlib's reader
+  was not used. `[lib].modules` order now carries a real dependency edge —
+  `io.cyr` precedes `cpu`/`mem`/`host`.
+- **Slice F of `tests/mihi.tcyr`** — 21 assertions across 8 groups, one per
+  finding that produced a code change, each written to fail against the 1.2.2
+  source. Includes the previously untested key-prefix case (`VERSION_ID=` must
+  not satisfy a search for `ID=`).
+- **`cyrius fmt --check` and required-files coverage for ADR 0003** in CI.
+
+### Fixed
+
+- **A-1 — silent truncation, short reads, and `-EINTR`, in six places.** A
+  `sys_read` that filled the buffer was indistinguishable from EOF, so an
+  undersized buffer produced *a plausible wrong value rather than an error*:
+  `mihi_uptime_secs(&buf, 4)` against a 20-byte `/proc/uptime` returned the first
+  four digits as a whole uptime. The short-read half was **not theoretical** —
+  measured on the test host, a single `read(fd, buf, 8192)` on `/proc/cpuinfo`
+  returns **3288 bytes** and it takes three reads to fill 8192, so
+  `mihi_cpu_model` had been parsing 3288 bytes of its caller's 8192 on every call
+  since 0.2.0. It worked only because `model name` sits ~1.6 kB in. Now: looped
+  reads, `-EINTR` retried (bounded at 8), and truncation detected with one extra
+  single-byte read when the buffer fills. Truncation is fatal for
+  `/proc/meminfo`, `/proc/uptime`, `/etc/os-release` and
+  `/sys/devices/system/cpu/online` (`MIHI_IO_WHOLE`) and expected for
+  `/proc/cpuinfo` (`MIHI_IO_PREFIX`), which is one block per logical CPU — 26 kB
+  on a 16-thread box — and whose parser deliberately wants only CPU 0's block.
+  `/sys/devices/system/cpu/online`'s scratch grew 64 → 1024 bytes at the same
+  time: it is a `%*pbl` *range list*, so a machine with many offline CPUs
+  produces a long value that 64 bytes cut mid-range.
+- **A-1 (cont.) — `O_NONBLOCK` + `O_CLOEXEC` on the probe open.** os-release(5)
+  says `/etc/os-release` *should* be a symlink, so `O_NOFOLLOW` is not available
+  to mihi; a symlink repointed at a FIFO would otherwise hang the caller on
+  `open(2)`, and mihi's first consumer renders the **login MOTD**, where a hang
+  is a login denial. `O_NONBLOCK` turns that into an immediate `-EAGAIN` and an
+  honest probe error. Inert on regular/procfs/sysfs files.
+- **A-2 — `mihi_parse_cpu_range` accumulated `total` without a bound.** 0.6.0's
+  C-2 capped each range bound at 18 digits, bounding every *addend* below 10^18,
+  but not the running total; ten such ranges wrap i64 negative. Previously
+  unreachable by arithmetic (the 64-byte buffer could not hold enough ranges) —
+  A-1's larger buffer is what made it live. Now capped at `MIHI_CPU_MAX` (2^20,
+  two orders of magnitude past Linux's 8192-CPU `CONFIG_NR_CPUS` ceiling), over
+  which the input is reported malformed.
+- **A-3 — the `kB → bytes` scale could return a NEGATIVE byte count.** 0.6.0's
+  M-1 capped `mihi_parse_meminfo_kb`'s accumulator at 18 digits; nobody re-checked
+  the `* 1024` that consumes its result, and 10^18 × 1024 is four times i64 max.
+  Measured: `MemTotal: 999999999999999999 kB` returned **-9017668127734891520**.
+  Now rejected above `MIHI_MEM_KB_MAX` (2^53 - 1 = floor(i64max / 1024), ~9 EiB
+  of RAM) rather than saturated — a value that large is a corrupt fact, not a
+  truncated one.
+- **A-4 — `mihi_uname` left the caller's buffer uninitialised on failure.** The
+  four field accessors are pure pointer math and, per the ADR 0001 contract,
+  deliberately do not check that the fill succeeded. So a caller that ignored the
+  `Result` — the easiest mistake to make against this API — got a "cstring"
+  pointing into uninitialised stack **with no NUL in it**, and the consumer's
+  `println()` walked off the buffer. The only place in mihi where a caller
+  mistake became an out-of-bounds read rather than a wrong value, and reachable
+  on any target where `sys_uname` is unwired (`lib/sys.cyr` returns `-ENOSYS` for
+  Windows). Now zeroes `UTS_SIZE` bytes first; worst case becomes an empty
+  string, which the existing zero-init test already covers.
+- **A-5 — `mihi_mem_free` had no AGNOS arm.** Alone among the file-reading
+  probes it fell through to a Linux `open("/proc/meminfo")` the sovereign kernel
+  cannot satisfy, so it returned `0 - 1` permanently. The 1.1.2 note justified
+  that as "no sysinfo equivalent", which stopped being true when `lib/sys.cyr`
+  grew the AGNOS §4.4 layout — `freeram` sits at `SI_FREERAM`. ⚠ The semantics
+  differ and are documented rather than hidden: Linux reports `MemAvailable`
+  (free + reclaimable), AGNOS reports plain free.
+- **D-3 — single-quoted `os-release` values were returned with their quotes.**
+  os-release(5) permits single *or* double quotes; `mihi_parse_osrelease_value`
+  tested only `"`, so `PRETTY_NAME='Some Linux'` fell through to the bare branch
+  and came back as `'Some Linux'`. Survived two audits because every mainstream
+  distro uses double quotes. Backslash escaping remains deliberately
+  unimplemented and is now documented as a known limit rather than silently
+  absent.
+
+### Changed
+
+- **Documentation corrections (D-1, D-2, D-4).** CLAUDE.md requires a source
+  citation on every probe; three were wrong or misleading, which matters more
+  than usual here because the citation *is* what a consumer reasons about.
+  **D-1**: `mihi_cpu_model` cited a device-tree source for aarch64 that the
+  kernel does not print — arm64's `c_show()` emits no `model name` line at all,
+  so the probe returns 0 on every aarch64 Linux box. Corrected; closing the gap
+  needs arm64 hardware and is filed in `roadmap.md`. **D-2**: the `mihi_distro`
+  fallback was justified on `ID` being "the mandatory minimum every distro must
+  ship" — os-release(5) makes **both** `ID` and `PRETTY_NAME` optional, with
+  documented defaults. The fallback stands, on the weaker true reason. **D-4**:
+  "recommend 8192" for `/proc/cpuinfo` read as "the file fits"; it is "CPU 0's
+  block fits", and leaving that implicit broke `mihi_cpu_model` during this very
+  sweep when the first cut of A-1's fix treated truncation as fatal everywhere.
+- **[ADR 0002](docs/adr/0002-gpu-singleton-cache.md) amended** for finding A-6:
+  1.2.2's `sakshi` log-level clamp put a second passenger in the first-call
+  TOCTOU window the ADR already documents. Under the interleaving *A saves INFO
+  → A clamps → B saves WARN → A restores INFO → B restores WARN*, the process is
+  left at `SK_WARN` permanently. No exposure today (every consumer is
+  single-threaded at first GPU probe, the same precondition the ADR already
+  relies on) and no fix — a lock would put a threading dependency inside a probe.
+  ADR 0002's alternative-3 now has a second reason to exist.
+- **`mihi_cpu_brand_fill`'s capacity contract strengthened in place** (finding
+  A-7). It stores 48 bytes through `buf` and takes no `cap`; only its in-tree
+  caller checks. It carries no leading underscore, so it is on the bundle's
+  public surface. Adding a `cap` parameter is a signature change against a frozen
+  API — a v2.0 item; until then the comment is the contract.
+- **`docs/sources.md`** gains a "shared read path" section and per-probe notes
+  for every behavioural change above; **`docs/development/roadmap.md`** gains the
+  arm64 CPU-brand item.
+
+### Performance
+
+Re-measured against the 1.2.2 source built in a scratch worktree on the same
+host, kernel and toolchain, so the delta is the code and nothing else:
+
+| Probe | 1.2.2 | 1.2.3 | Δ |
+|---|---:|---:|---:|
+| `mihi_uname` | 481 ns | 1.014 µs | +533 ns (A-4 zeroing, once per process) |
+| `mihi_cpu_model` | 37.34 µs | 84.51 µs | **+126%** (reads all 8192 bytes, not 3288) |
+| everything else | — | — | +3% … +16% (helper call + two open flags) |
+
+Pure parsers (25–411 ns) and field accessors (2–3 ns) unchanged. Rejected the
+obvious mitigation — a single-read `MIHI_IO_PREFIX` — because it restores the
+defect: `/proc/cpuinfo`'s first read contains `model name` by where the kernel
+happens to put the field, not by guarantee. 47 µs once per process on the login
+path is not worth buying that fragility back.
+
+### Verified
+
+Whole CI workflow replayed locally step by step. `cyrius deps --verify` 109/0;
+build clean; smoke exits 0 with empty stderr; `--agnos` cross-build compiles with
+the CPUID path intact; fmt clean across all 14 hand-written sources; lint clean;
+distlib byte-deterministic; DCE parity; security scan 0; benchmark baseline
+appended to `docs/benchmarks/history.csv`. **`cyrius test tests/mihi.tcyr`: 137
+passed, 0 failed.**
+
 ## [1.2.2] — 2026-08-23
 
 Toolchain / dependency maintenance cut. Cyrius pin **6.2.37 → 6.5.35**, ai-hwaccel
