@@ -76,9 +76,10 @@ buffers, no probe-internal allocation.
   `detect_interconnects`. Mihi pinned `[deps.ai-hwaccel] tag = "2.2.6"`
   at this milestone (bumped from 2.2.5 in 0.4.1, see below) and calls
   only `registry_detect_no_exec()` — the no-exec contract is enforced
-  on the ai-hwaccel side. **Current pin: 2.3.18** (1.2.2); the exec set
-  is nine backends there, `BACKEND_WINDOWS` having joined it. See
-  [`state.md`](state.md) for the live pin.
+  on the ai-hwaccel side. **Current pin: 2.3.22** (1.2.6); the exec set
+  is nine of eighteen backends there, `BACKEND_WINDOWS` having joined
+  it — re-measured at the 1.2.6 bump. See [`state.md`](state.md) for
+  the live pin.
 - ✅ **Safe backends mihi sees**: ROCm, Intel NPU, AMD XDNA, TPU,
   Qualcomm, Groq, Samsung NPU, MediaTek APU — plus the sysfs
   post-passes (`enrich_bandwidth/pcie/numa`, `detect_storage`,

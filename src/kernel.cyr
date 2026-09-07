@@ -19,6 +19,23 @@
 # Result: Ok(uts) or Err.
 # Source: uname(2) — Linux kernel arch/*/kernel/sys.c::sys_newuname.
 #
+# ⛔ CALLER CONTRACT CHANGED AT 1.2.6 (cyrius 6.6.0). `Result` is now the
+# VALUE FORM — `enum Result<T, E>: stack` hands back a REGISTER PAIR
+# (tag in rax, payload in rdx) instead of a 16-byte box, so this is the
+# only correct receive:
+#
+#     var t, v = mihi_uname(&uts);   # bind BOTH halves
+#     if (is_err_result(t) == 1) { ... }
+#
+# The old single-variable `var r = mihi_uname(&uts);` is a hard compile
+# ERROR naming the fix — it would keep the tag and silently drop the
+# payload. That diagnostic is the migration tool: every stale consumer
+# site fails at its own line rather than miscompiling. `is_ok` /
+# `is_err_result` are unchanged (argument 1 receives rax, which IS the
+# tag); `payload()` is gone, and under the value form the payload is
+# already a plain variable. See lib/result.cyr and cyrius CHANGELOG
+# [6.6.0].
+#
 # Hardened at the 2026-08-23 audit (finding A-4): the buffer is zeroed
 # BEFORE the syscall. The four field accessors (mihi_kernel_name /
 # mihi_kernel_version / mihi_cpu_arch / mihi_hostname) are pure pointer
@@ -39,7 +56,8 @@ fn mihi_uname(uts): i64 {
         z = z + 1;
     }
     # sys_uname (lib/sys.cyr) returns raw 0 / -errno; wrap as Result for callers
-    # that check is_ok / is_err_result (iam). The UTS_* offsets resolve
+    # that check is_ok / is_err_result (iam) — see the value-form bind rule in
+    # this function's header comment. The UTS_* offsets resolve
     # target-correct from sys.cyr — AGNOS: sysname@0 / nodename@16 / release@32 /
     # machine@48 in the sovereign 64-byte struct; Linux: the 390-byte layout.
     var rc = sys_uname(uts);

@@ -4,7 +4,7 @@ version = "${file:VERSION}"
 description = "मिही / mihi — system-info probe library (CPU / RAM / GPU / kernel / uptime / distro / hostname). Substrate for iam, chakshu, and other tools that need 'tell me about this box'. Maori: the formal self-introduction ceremony."
 license = "GPL-3.0-only"
 language = "cyrius"
-cyrius = "6.5.35"
+cyrius = "6.6.0"
 
 [build]
 # In-tree smoke binary — exercises the lib API end-to-end. Consumers
@@ -53,13 +53,30 @@ modules = ["src/types.cyr", "src/io.cyr", "src/cpu.cyr", "src/mem.cyr", "src/ker
 # 641 KB bayan monolith (json + toml + cyml + csv + base64 + bigint + u128 +
 # yaml + pdf) for a JSON path mihi never touches. Do not re-add it: if a future
 # mihi genuinely needs JSON, take `dist/bayan-json.cyr` as a git dep instead.
+#
+# 1.2.6 finished the job upstream. ai-hwaccel 2.3.20 made its own `[deps.bayan]`
+# `optional = true` behind a `[features]` gate, so it no longer resolves
+# TRANSITIVELY into consumers either: mihi's lock lost its second commit pin
+# (bayan 1.5.2), and the orphaned `lib/bayan-json.cyr` was pruned. The visible
+# residue is seven `undefined function 'bayan_json_v_*'` build warnings. They
+# are EXPECTED and must not be "fixed" by adding bayan back here — all five
+# enclosing functions (`_pj_int` / `_pj_bool` / `_pj_cstr` / `profile_from_json`
+# / `profile_from_json_str`) have zero callers inside ai-hwaccel, so the symbols
+# are unreachable and DCE eliminates them. ai-hwaccel 2.3.20 names mihi as one
+# of three consumers in exactly this position.
 stdlib = ["string", "fmt", "alloc", "io", "vec", "str", "slice", "syscalls", "sys", "assert", "fs", "tagged", "process", "fnptr", "thread", "freelist", "hashmap", "sakshi", "ct", "bench"]
 
-# ai-hwaccel: hardware-accelerator detection. mihi pins 2.2.5 — the
-# first release with the no-exec contract (registry_detect_no_exec()
-# + builder_no_exec()). Mihi M3 GPU probes call exclusively into the
-# no-exec API; see docs/development/roadmap.md.
+# ai-hwaccel: hardware-accelerator detection. 2.2.5 was the first release
+# with the no-exec contract (registry_detect_no_exec() + builder_no_exec());
+# mihi M3 GPU probes call exclusively into that API — never registry_detect()
+# — because probes are pure reads. See docs/development/roadmap.md.
+#
+# Pin history: 2.2.5 (0.4.0) -> 2.2.6 (0.4.1) -> 2.3.18 (1.2.2) -> 2.3.19
+# (1.2.5, forced: it is what moves the bundle onto canonical bayan_json_v_*
+# names) -> 2.3.22 (1.2.6). Nothing in 2.3.20/21/22 changes a symbol mihi
+# calls; 2.3.21 is ai-hwaccel's own cyrius 6.6.0 bump, which is why this pin
+# and [package].cyrius move together.
 [deps.ai-hwaccel]
 git = "https://github.com/MacCracken/ai-hwaccel.git"
-tag = "2.3.19"
+tag = "2.3.22"
 modules = ["dist/ai-hwaccel.cyr"]

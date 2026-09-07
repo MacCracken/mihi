@@ -30,8 +30,8 @@ fn main() {
     alloc_init();
 
     var uts[390];
-    var res = mihi_uname(&uts);
-    if (is_err_result(res) == 1) {
+    var res_tag, res_val = mihi_uname(&uts);
+    if (is_err_result(res_tag) == 1) {
         println("probe: uname failed");
         return 1;
     }

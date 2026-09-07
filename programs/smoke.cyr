@@ -13,8 +13,8 @@ fn main() {
 
     # Slice A — uname-backed probes. One syscall, three facts.
     var uts[390];
-    var res = mihi_uname(&uts);
-    if (is_err_result(res) == 1) {
+    var res_tag, res_val = mihi_uname(&uts);
+    if (is_err_result(res_tag) == 1) {
         println("mihi smoke: uname(2) failed");
         return 1;
     }
@@ -81,7 +81,7 @@ fn main() {
     }
     print("distro:  ", 9); println(distro);
 
-    # Slice E — accelerator probes via ai-hwaccel 2.3.18 no-exec API.
+    # Slice E — accelerator probes via ai-hwaccel 2.3.22 no-exec API.
     # First call lazy-initializes the module-level registry cache; the
     # subsequent name/memory calls are O(n) walks of the cached vec.
     # No subprocess spawning anywhere on this path — only the eight

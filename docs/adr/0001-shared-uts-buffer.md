@@ -43,6 +43,26 @@ fn mihi_cpu_arch(uts): i64        # ptr to uts.machine
 fn mihi_hostname(uts): i64        # ptr to uts.nodename  (M2)
 ```
 
+> **Amendment — 1.2.6 (2026-09-07), cyrius 6.6.0.** The shared-buffer
+> decision above is unchanged: one syscall, four accessors, no mihi-owned
+> state. What changed is how `mihi_uname`'s *return* is received. cyrius
+> 6.6.0 made `Result` the value form (`enum Result<T, E>: stack`), so it
+> hands back a register pair — tag in rax, payload in rdx — instead of a
+> 16-byte box from the global bump allocator. Callers must bind both
+> halves:
+>
+> ```cyrius
+> var t, v = mihi_uname(&uts);
+> if (is_err_result(t) == 1) { ... }
+> ```
+>
+> A single-variable bind is a hard compile error naming the fix, so no
+> caller can silently keep the tag and drop the payload. The four field
+> accessors are unaffected — they are pure pointer math over the caller's
+> buffer, which is exactly the property this ADR was chosen for, and it
+> is why an ecosystem-wide calling-convention change touched one line of
+> mihi's surface instead of five.
+
 Consumers stack-allocate the buffer once per logical "tell me about
 this box" invocation, call `mihi_uname` once, then read whichever
 fields they want. The buffer's lifetime is the caller's stack frame;
@@ -65,7 +85,9 @@ locks the convention for the whole library, not just uname.
 - **Negative** — the signature deviates from the roadmap's zero-arg
   sketch; consumers must allocate the uts buffer and pass it around.
   Cannot write `println(mihi_cpu_arch())` — must be
-  `var uts[390]; mihi_uname(&uts); println(mihi_cpu_arch(&uts))`.
+  `var uts[390]; var t, v = mihi_uname(&uts); println(mihi_cpu_arch(&uts))`
+  (the two-variable bind is the 1.2.6 amendment above; before that it
+  was `mihi_uname(&uts);` bare).
   Roadmap section M1 / M2 signature lines need to be updated to
   match.
 

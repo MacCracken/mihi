@@ -20,8 +20,8 @@ fn main() {
     var uts[390];
     var i = 0;
     while (i < 390) { store8(&uts + i, 0); i = i + 1; }
-    var res = mihi_uname(&uts);
-    assert_eq(is_err_result(res), 0, "uname(2) returns Ok on linux");
+    var res_tag, res_val = mihi_uname(&uts);
+    assert_eq(is_err_result(res_tag), 0, "uname(2) returns Ok on linux");
 
     # Sysname is always populated on a real kernel; first byte is non-null.
     # On Linux, sysname starts with 'L' (0x4C).
@@ -367,8 +367,8 @@ fn main() {
     var luts[390];
     var li = 0;
     while (li < 390) { store8(&luts + li, 0); li = li + 1; }
-    var hres = mihi_uname(&luts);
-    assert_eq(is_err_result(hres), 0, "uname(2) Ok for hostname probe");
+    var hres_tag, hres_val = mihi_uname(&luts);
+    assert_eq(is_err_result(hres_tag), 0, "uname(2) Ok for hostname probe");
     var live_hn = mihi_hostname(&luts);
     assert(load8(live_hn) != 0, "live nodename first byte non-null");
 
@@ -1009,8 +1009,8 @@ fn main() {
     var puts[390];
     var pi = 0;
     while (pi < 390) { store8(&puts + pi, 170); pi = pi + 1; }   # 0xAA poison
-    var prc = mihi_uname(&puts);
-    assert(is_ok(prc) == 1, "uname succeeded on the test host");
+    var prc_tag, prc_val = mihi_uname(&puts);
+    assert(is_ok(prc_tag) == 1, "uname succeeded on the test host");
     var poison_left = 0;
     var pj = 0;
     while (pj < 390) {

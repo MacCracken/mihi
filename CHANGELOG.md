@@ -4,6 +4,133 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.2.6] — 2026-09-07 — cyrius 6.6.0: `Result` becomes the value form
+
+**Toolchain `6.5.35 → 6.6.0` (39 releases) + ai-hwaccel `2.3.19 → 2.3.22`.** One
+of these is a real break. cyrius 6.6.0 makes `Result` / `Option` / `Either` the
+**value form** — `enum Result<T, E>: stack` returns its `(tag, payload)` in a
+register pair instead of a 16-byte box from the global bump allocator — and that
+changes the **arity** of every Result in the ecosystem. `mihi_uname` is mihi's
+one Result-returning probe, so mihi's public surface changes with it.
+
+The probe *facts* are untouched: same sources, same parsers, same values, same
+143 assertions.
+
+### Breaking
+
+- **`mihi_uname` must now be received as two variables.** It returns a register
+  pair (tag in rax, payload in rdx), so a consumer writes:
+
+  ```cyrius
+  var t, v = mihi_uname(&uts);        # bind BOTH halves
+  if (is_err_result(t) == 1) { ... }
+  ```
+
+  The old single-variable `var r = mihi_uname(&uts);` is a **hard compile error
+  naming the fix**, not a silent miscompile — it would keep the tag and drop the
+  payload, so cyrius refuses it. That diagnostic is the migration tool:
+  every stale consumer site fails at its own line. `is_ok` / `is_err_result` are
+  **unchanged** (argument 1 receives rax, which *is* the tag), so the check
+  itself does not move — only the bind.
+
+  This is an API break after the 1.0 freeze, which mihi does not take by choice:
+  the arity is decided by the vendored `lib/result.cyr`, and the toolchain and
+  its stdlib snapshot cannot be split. Consumers (`iam`, `chakshu`, `hapi`,
+  `BannerManor`) must bump mihi and fix their `mihi_uname` bind in the same
+  commit. Nothing else in the mihi surface returns a `Result`; the other twelve
+  probes return plain `i64` / `cstring` and are unaffected.
+
+  Migrated in-tree at five sites: `programs/smoke.cyr`,
+  `programs/agnos_probe.cyr`, and three in `tests/mihi.tcyr`. The caller contract
+  is documented on `mihi_uname` itself (`src/kernel.cyr`).
+
+### Changed
+
+- **Cyrius pin `6.5.35` → `6.6.0`.** Also clears the wrapper's standing
+  `6.5.36 enum Critical` warning (enum constants ≥ 2^62 read back as `-1`), which
+  the 6.5.35 pin had been carrying since 1.2.2.
+- **`lib/` re-vendored** from the 6.6.0 snapshot — `cyrius lib sync --full`,
+  109 files, **40 modules changed**, including `lib/result.cyr` (the file that
+  decides the arity above). `cyrius deps` then adds the transitive
+  **`lib/hashseed.cyr`** — new at 6.5.39, required by the declared `hashmap`
+  leaf. As ai-hwaccel 2.3.21 records for its own tree: `lib sync` alone no longer
+  yields a complete lib/.
+- **ai-hwaccel pin `2.3.19` → `2.3.22`** — three upstream releases, none of which
+  changes a symbol mihi calls:
+  - **2.3.20** made `[deps.bayan]` `optional = true` and feature-gated, so it no
+    longer resolves transitively into consumers. This is the change that removes
+    a commit pin from mihi's lock (below).
+  - **2.3.21** is ai-hwaccel's own 6.6.0 bump plus four portability fixes
+    (`getenv` on macOS/Windows, the disk cache's raw x86_64 mkdir/unlink on
+    aarch64, `_monotonic_secs()` reading uninitialised stack off-Linux, and
+    detector threads logging through single-threaded `sakshi`). The last one is
+    the only one on a path mihi reaches, and mihi calls the *non*-threaded
+    `registry_detect_no_exec()`.
+  - **2.3.22** fixed `load_models` returning 1 of 26 models. Not reachable from
+    mihi: it has no caller inside ai-hwaccel's detection path either.
+- **`cyrius.lock`**: 110 hashes / **2** commit-pins → 110 hashes / **1**
+  commit-pin. The `bayan 1.5.2` pin is gone (2.3.20 feature-gating), and
+  `lib/hashseed.cyr` takes the freed hash slot.
+- Version references refreshed in `src/main.cyr`, `src/gpu.cyr` and
+  `programs/smoke.cyr` (`2.3.18` → `2.3.22`), and `dist/mihi.cyr` regenerated
+  with the 1.2.6 header stamp.
+
+### Removed
+
+- **`lib/bayan-json.cyr` (100 KB) pruned** — a stale orphan, and the direct
+  consequence of the 2.3.20 feature gate. It arrived through ai-hwaccel 2.3.19's
+  transitive `[deps.bayan]`, is **not** in the 6.6.0 stdlib snapshot, and after
+  the bump was pinned by no commit line at all: 1.5.2-era third-party source,
+  frozen, unreferenced, and un-updatable in place. `cyrius deps` was still
+  hashing it into the lock, which is precisely the "vendored file with no owner"
+  shape `1.2.2` pruned ten of. Removing it left `build/mihi-smoke` **byte-identical
+  at 379,872 B** — it was never linked.
+
+### Notes — two new build warnings, both expected
+
+- **Seven `undefined function 'bayan_json_v_*'` warnings.** These are the
+  visible half of the 2.3.20 gate: `dist/ai-hwaccel.cyr` *references* eleven
+  `bayan_json_v_*` sites and defines none, and mihi supplies no bayan. Verified
+  unreachable rather than assumed — all five enclosing functions (`_pj_int`,
+  `_pj_bool`, `_pj_cstr`, `profile_from_json`, `profile_from_json_str`) sit in a
+  deserialize island with **zero callers inside ai-hwaccel**, and the disk
+  cache's read path is still a `TODO: parse JSON registry from disk`. `CYRIUS_DCE=1`
+  eliminates them (882 unreachable fns, 196,826 B) and the DCE build produces
+  identical smoke output. ai-hwaccel 2.3.20 names mihi as one of three consumers
+  in exactly this position. **Do not "fix" this by adding `bayan` to
+  `[deps].stdlib`** — that is the 641 KB monolith 1.2.5 removed.
+- **`lib/io.cyr:442: raw syscall 32 is x86_64 dup` on `--aarch64`.** Upstream, in
+  the *vendored stdlib*, not in mihi's `src/io.cyr` (149 lines). Not mihi's to
+  patch per CLAUDE.md's no-hand-edits-in-`lib/` rule; the aarch64 build succeeds.
+
+### Verified
+
+Full local replay of the CI gate sequence, all green:
+
+- `cyrius deps --verify` — **110 verified, 0 failed**
+- `cyrius test tests/mihi.tcyr` — **143 passed, 0 failed**, unchanged from 1.2.5
+- smoke binary — exit 0, **empty stderr**, trailing `mihi smoke ok`; 379,872 B
+- DCE parity — `CYRIUS_DCE=1` build 183,264 B, identical trailing line
+- `cyrius fmt --check` — clean across all 15 hand-written sources
+- `cyrius lint src/*.cyr` — no non-cosmetic warnings
+- cross-target — `--agnos programs/agnos_probe.cyr`, `--aarch64 programs/smoke.cyr`
+  and `--aarch64 tests/mihi.tcyr` all compile
+- benches — all three `benches/*.bcyr` compile
+- `cyrius distlib` — deterministic across two runs, `d46eb704…`
+  (unchanged by the `lib/` prune, as it must be: the bundle is
+  generated from `src/` alone)
+
+Not run: an A/B benchmark. 1.2.2's toolchain cut carried one; this cut changes
+the *representation* of a value mihi constructs once per `mihi_uname`, and the
+honest measurement of that is a re-baseline rather than a comparison against
+numbers taken on a different allocator contract. `docs/benchmarks/history.csv`
+still ends at `188a7d3`.
+
+**Not exposed to the 17-release P0.** cyrius 6.6.0 also fixes a silent miscompile
+live from 6.5.57 through 6.5.73 (`X = Y;` between two struct-*pointer* locals
+copied `STRUCTSZ/8` slots over the neighbouring locals). mihi was pinned at
+6.5.35 for that entire window and never built on an affected toolchain.
+
 ## [1.2.5] — 2026-08-24 — drop the `bayan` cover; consumers stop linking a 641 KB monolith
 
 `bayan` sat in `[deps].stdlib` purely as **cover for a dependency's dependency**. mihi's
