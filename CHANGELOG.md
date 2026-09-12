@@ -4,6 +4,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.2.7] - 2026-09-11
+
+### Changed
+
+- **Toolchain `6.6.0` → `6.6.2`.** No source change; the value form needed none.
+  Build, tests, and any bench/fuzz/distlib target the repo ships re-verified at the new pin.
+
+
 ## [1.2.6] — 2026-09-07 — cyrius 6.6.0: `Result` becomes the value form
 
 **Toolchain `6.5.35 → 6.6.0` (39 releases) + ai-hwaccel `2.3.19 → 2.3.22`.** One
