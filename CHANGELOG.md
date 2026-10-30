@@ -4,6 +4,107 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-10-29 — cyrius 6.7.9
+
+**Toolchain `6.6.20 → 6.7.9`**, mihi's first release on the cyrius 6.7 language
+minor, and bayan `1.5.12 → 1.5.14`. No probe code changed and the API is unchanged:
+143/143, smoke output identical to 1.2.8 apart from the live free-memory and
+uptime lines, and `dist/mihi.cyr` byte-identical to 1.2.8's apart from the
+version stamp and one corrected comment.
+
+### Changed — toolchain and dependencies
+
+- **Cyrius pin `6.6.20` → `6.7.9`.** `lib/` re-vendored from empty (`rm -rf lib
+  cyrius.lock`, `cyrius lib sync --full`, `cyrius deps`): the same 113-file
+  snapshot layout as 6.6.20, 67 modules changed. The lock was regenerated: 115
+  entries, two commit pins, trailing `cyrius 6.7.9`.
+- **None of 6.7.x's language changes reaches mihi.** The newly reserved words
+  (`trait` 6.7.0, `const` 6.7.2, `true` / `false` 6.7.3, `do` 6.7.5, `dyn` 6.7.8)
+  appear nowhere as identifiers; the only hit is the string `"true is true"` in
+  the tests. Every CI target builds with 0 warnings, as on 6.6.20, and before the
+  version bump `cyrius distlib` reproduced 1.2.8's bundle byte for byte.
+- **bayan `1.5.12` → `1.5.14`**, the bayan release that pins cyrius 6.7.9 (the
+  6.7.9 stdlib folds 1.5.13). It is still the optional thin `dist/bayan-json.cyr`,
+  for mihi's own builds only. 1.5.14's JSON module hands float parsing to the
+  stdlib's `f64_parse_n`, so its `# Requires` block adds `lib/math.cyr`. That
+  lands in mihi's own builds and nowhere else. `cyrius deps` now prints
+  `note: bayan 1.5.12 (wanted by ai-hwaccel) not used; 1.5.14 (the root) resolved
+  first`. ai-hwaccel's own bayan dep is optional and its JSON path unreachable,
+  so the note is informational.
+- **Both 1.2.8 sidecar guards re-measured on 6.7.9.** Without the bayan-json dep
+  the verify still records the bayan monolith (sidecar `sys bayan syscalls`), so
+  the dep stays. Without the `include "lib/sys.cyr"` seed, 6.7.9 now records
+  `sys` for `UTS_MACHINE` (cyrius fixed the first-declarer owner rule at 6.7.7),
+  so the seed is no longer load-bearing. It stays because it states a real
+  dependency. [Architecture 001](docs/architecture/001-bundle-and-dependency-shape.md)
+  is updated to match.
+- **ai-hwaccel stays at `2.4.2`.** No ai-hwaccel release pins 6.7.9: 2.4.2 pins
+  6.6.20 and every 2.5.x pins 6.7.18. Each 2.5.x tag was built against mihi on
+  6.7.9:
+  - 2.5.0–2.5.4 compile clean, but upstream tested them only on 6.7.18, and none
+    fixes anything on mihi's no-exec path. 2.5.0's bundle is 2.4.2's apart from
+    its version line, and upstream checked that code against the 6.7.x language
+    changes.
+  - 2.5.5 does fix mihi's path (see *Known issue*), but it needs cyrius ≥ 6.7.16.
+    On 6.7.9 it leaves `env_block` (first in 6.7.16) and
+    `str_builder_add_json_cstr` (first in 6.7.10) undefined.
+
+### Known issue — a phantom TPU, from ai-hwaccel through 2.5.4
+
+- **`mihi_gpu_*` can report a "Google TPU v4" that is not there.**
+  ai-hwaccel's `detect_tpu` types every `/sys/class/accel/accelN` node as a TPU,
+  except amdxdna's, without checking the driver. That class is the kernel's DRM
+  compute-accelerator class, so an Intel NPU (`intel_vpu`, e.g. a Core Ultra
+  laptop), a Gaudi (`habanalabs`) or a Cloud AI 100 (`qaic`) node gives an extra
+  `ACCEL_TPU` profile, which upstream measured at 32 GiB. It has been true for
+  every ai-hwaccel mihi has pinned. Not affected: hosts with no
+  `/sys/class/accel` node, which includes archaemenid. ai-hwaccel 2.5.5 classifies
+  nodes by driver and PCI vendor; taking it means a cyrius ≥ 6.7.16 pin.
+
+### Fixed
+
+- **`src/gpu.cyr`'s TPU citation was wrong.** It said `/sys/class/accel/accel*
+  (apex_n driver, Coral)`; 2.4.2's detector checks no driver. The header now says
+  what the detector does, and `docs/sources.md` Slice E records the known wrong
+  value.
+
+### Consumers
+
+- Repin: `[deps.mihi] tag = "1.3.0"` with `cyrius = "6.7.9"`; `[deps.ai-hwaccel]`
+  stays `"2.4.2"`. A consumer moving to 6.7.x should check its own code against
+  the reserved words above.
+- The published sidecar is unchanged: `sys syscalls`. A scratch consumer on 6.7.9
+  (calling `mihi_uname` and `mihi_gpu_count`) builds with one commit pin, no
+  bayan, sigil or math file, and the seven expected unreachable `bayan_json_v_*`
+  warnings: 404,800 B, 200,000 B with `CYRIUS_DCE=1` (404,832 / 200,032 B on
+  6.6.20).
+
+### Verified
+
+Local replay of every `ci.yml` step, all green:
+
+- `cyrius deps --verify`: **115 verified, 0 failed**
+- `cyrius test tests/mihi.tcyr`: **143 passed, 0 failed**
+- smoke: exit 0, empty stderr, trailing `mihi smoke ok`, 0 build warnings
+- `cyrius fmt --check` and `cyrius lint src/*.cyr` clean
+- `cyrius distlib`: no drift and deterministic across runs; sidecar `sys syscalls`
+- cross-target: `--agnos programs/agnos_probe.cyr`, `--aarch64 programs/smoke.cyr`
+  and `--aarch64 tests/mihi.tcyr` compile with 0 warnings
+- all three `benches/*.bcyr` compile (`probe_paths`' "large static data" warning
+  predates 1.2.8)
+- DCE parity, the security scan and the docs job's required-files check
+
+| | 1.2.8 (6.6.20) | 6.7.9, deps unchanged | 1.3.0 |
+|---|---:|---:|---:|
+| `build/mihi-smoke` | 498,464 B | 498,416 B | 533,160 B |
+| `CYRIUS_DCE=1` smoke | 215,840 B | 215,792 B | 217,768 B |
+
+The toolchain is size-neutral. The +34,744 B is bayan-json 1.5.14 and the `math`
+leaf it requires, in mihi's own dev binaries only.
+
+Not run: a benchmark A/B, and runs on arm64 hardware or on AGNOS (the cross
+builds only compile).
+
 ## [1.2.8] — 2026-10-29 — cyrius 6.6.20, ai-hwaccel 2.4.2, and a two-leaf sidecar
 
 **Toolchain `6.6.2 → 6.6.20` + ai-hwaccel `2.3.22 → 2.4.2`.** No probe signature,

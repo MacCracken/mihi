@@ -17,7 +17,10 @@
 #   - Apple:      /proc/device-tree/compatible (Asahi Linux)
 #   - Intel NPU:  /sys/class/misc/intel_npu
 #   - AMD XDNA:   /sys/class/accel/accel* (amdxdna driver)
-#   - TPU:        /sys/class/accel/accel* (apex_n driver, Coral)
+#   - TPU:        /sys/class/accel/accel* — EVERY node but amdxdna's,
+#                 driver unchecked, so 2.4.2 reports an Intel NPU,
+#                 Gaudi or Cloud AI 100 node as a "Google TPU v4"
+#                 (fixed upstream in ai-hwaccel 2.5.5)
 #   - Qualcomm:   /sys/class/qaic
 #   - Groq:       /dev/groq
 #   - Samsung NPU:/sys/class/misc/samsung_npu

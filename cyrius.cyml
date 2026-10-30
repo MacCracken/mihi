@@ -4,7 +4,7 @@ version = "${file:VERSION}"
 description = "मिही / mihi — system-info probe library (CPU / RAM / GPU / kernel / uptime / distro / hostname). Substrate for iam, chakshu, and other tools that need 'tell me about this box'. Maori: the formal self-introduction ceremony."
 license = "GPL-3.0-only"
 language = "cyrius"
-cyrius = "6.6.20"
+cyrius = "6.7.9"
 
 [build]
 # The in-tree smoke binary: exercises the whole probe surface end to end.
@@ -35,7 +35,7 @@ modules = ["dist/ai-hwaccel.cyr"]
 [deps.bayan]
 optional = true
 git = "https://github.com/MacCracken/bayan.git"
-tag = "1.5.12"
+tag = "1.5.14"
 modules = ["dist/bayan-json.cyr"]
 
 [features]

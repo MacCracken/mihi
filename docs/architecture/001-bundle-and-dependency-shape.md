@@ -32,13 +32,14 @@ dependency needs belongs to that dependency's sidecar, not here.
 The verify seeds the sidecar with the `include "lib/<leaf>.cyr"` lines the
 bundled modules carry, then compiles and adds owners for whatever is still
 undefined. That is why `cpu.cyr`, `mem.cyr`, `kernel.cyr` and `host.cyr` each
-include `lib/sys.cyr` even though mihi's own build prepends it. Without the
-seed, cyrius 6.6.20 credits `UTS_MACHINE` to the first snapshot file that
-declares it, which is the sigil fold's private copy of the `UTS_*` enum. The
-sidecar then names `sigil` and every consumer vendors and links it. The answer
-also depends on the directory order of the publishing host's filesystem
-(cyrius fixed that half at 6.7.7). The seed makes the sidecar `sys syscalls` on
-every host.
+include `lib/sys.cyr` even though mihi's own build prepends it. The include
+states a real dependency, and it keeps the sidecar from resting on the verify's
+owner rule. That rule went wrong on cyrius 6.6.20: without the seed, 6.6.20
+credits `UTS_MACHINE` to the first snapshot file that declares it, which is the
+sigil fold's private copy of the `UTS_*` enum, in the publishing host's
+directory order. The sidecar then names `sigil` and every consumer vendors and
+links it. cyrius 6.7.7 fixed the owner rule; measured on 6.7.9, the unseeded
+verify records `sys` for `UTS_MACHINE`. The seed stays.
 
 ## bayan: the thin module, optional, never the monolith
 
@@ -47,16 +48,17 @@ none. They sit in its `profile_from_json` deserialize path, which nothing in
 ai-hwaccel calls, so they are unreachable. ai-hwaccel declares bayan optional
 and leaves the names to a consumer that wants that path. mihi never calls it.
 
-If nothing in the verify unit defines them, cyrius 6.6.20's `distlib` looks
-the names up in the stdlib snapshot, finds the bayan monolith (`lib/bayan.cyr`:
+If nothing in the verify unit defines them, `distlib` (measured on 6.6.20 and
+6.7.9) looks the names up in the stdlib snapshot, finds the bayan monolith (`lib/bayan.cyr`:
 json, toml, cyml, csv, base64, bigint, u128, yaml, pdf) and records `bayan` as
 a requirement of mihi's bundle. mihi's bundle never references those names.
-Measured on a minimal consumer at 6.6.20, that sidecar (`sigil bayan sys
-syscalls`) took the binary from 404,832 B to 1,804,072 B (689,960 B with DCE).
+On 6.7.9 that sidecar is `sys bayan syscalls`. Measured on a minimal consumer
+at 6.6.20, the sidecar 6.6.20 derived unaided (`sigil bayan sys syscalls`) took
+the binary from 404,832 B to 1,804,072 B (689,960 B with DCE).
 
 So mihi declares `[deps.bayan]` on bayan's **thin** JSON module
-(`dist/bayan-json.cyr`), at the tag the pinned cyrius folds, as
-`optional = true` with `[features] default = ["bayan"]`. The rules that follow:
+(`dist/bayan-json.cyr`) as `optional = true` with
+`[features] default = ["bayan"]`. The rules that follow:
 
 - **Never put `bayan` in `[deps] stdlib`.** That is the monolith, and through
   1.2.4 the sidecar copied `[deps] stdlib`, so every consumer linked 641 KB of
@@ -66,8 +68,11 @@ So mihi declares `[deps.bayan]` on bayan's **thin** JSON module
   and its `lib/` has no bayan file. Measured: with `optional` removed, the same
   consumer's lock gains the bayan commit pin and its `lib/` gains
   `bayan-json.cyr`.
-- **Move the tag with the toolchain.** Use the bayan tag that the pinned
-  cyrius folds, which is also the one ai-hwaccel pins.
+- **Move the tag with the toolchain.** Use the bayan release whose own
+  `cyrius` pin is mihi's (1.5.14 for 6.7.9). If none pins it exactly, use the
+  tag that cyrius folds into its stdlib. `cyrius deps` notes when ai-hwaccel's
+  optional bayan wants a different tag; mihi's root pin wins, and that is
+  fine.
 
 Expected warnings follow from this. mihi's own builds print no `undefined
 function` lines. A consumer that does not supply bayan prints the seven
