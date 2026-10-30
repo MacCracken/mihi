@@ -4,6 +4,129 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.3.1] — 2026-10-29 — cyrius 6.7.18, ai-hwaccel 2.5.5, and no phantom TPU
+
+**Toolchain `6.7.9 → 6.7.18`, ai-hwaccel `2.4.2 → 2.5.5`, bayan `1.5.14 →
+1.11.1`**, the latest of all three. API unchanged; 143/143. No probe code
+changed. The GPU probes find more, and stop reporting a TPU that is not there
+(*Changed — probe behaviour*).
+
+### Changed — toolchain and dependencies
+
+- **Cyrius pin `6.7.9` → `6.7.18`.** `lib/` re-vendored from empty (`rm -rf lib
+  cyrius.lock`, `cyrius lib sync --full`, `cyrius deps`): the same 113-file
+  layout, 68 modules changed. The lock was regenerated: 115 entries, two commit
+  pins, trailing `cyrius 6.7.18`. mihi's source needed no change. Every target
+  builds with 0 warnings, and the `benches/probe_paths.bcyr` "large static data"
+  warning 1.2.8 and 1.3.0 carried is gone too. Before the version bump and the
+  comment updates, `cyrius distlib` reproduced 1.3.0's bundle byte for byte.
+- **ai-hwaccel pin `2.4.2` → `2.5.5`**, the latest. It pins cyrius 6.7.18 and
+  needs at least 6.7.16 (`env_block`), which is why 1.3.0 could not take it.
+  2.5.0 is the toolchain move and 2.5.1–2.5.4 change nothing mihi reaches.
+  2.5.5's audit fixes are below. No symbol mihi calls changed.
+- **bayan `1.5.14` → `1.11.1`**, the latest. It is the commit ai-hwaccel 2.5.5
+  pins and that cyrius 6.7.18 folds, and it pins cyrius 6.7.16. It is still the
+  optional thin `dist/bayan-json.cyr`, for mihi's own builds only. Its sidecar
+  also names `math`, `slice` and `hashseed`; all three are in the vendored
+  snapshot. The 1.3.0 note that ai-hwaccel wanted a different bayan is gone,
+  because both now pin 1.11.1.
+- **The bayan-json dep is still needed.** Re-measured on 6.7.18 without it:
+  the verify records the bayan monolith and the sidecar becomes `sys bayan
+  syscalls`.
+
+### Changed — the no-exec contract, re-measured
+
+`registry_detect_no_exec()` is now `registry_detect_with_opts(builder_native(),
+0)`. It no longer masks six backends. It drops the two that find nothing
+without a tool (CUDA and Intel oneAPI, `backend_needs_exec`) and runs the other
+16 with `allow_exec` 0.
+
+Every vendor-tool run is behind `allow_exec == 1` in the code: `hl-smi`,
+`neuron-ls`, `cerebras_cli`, `gc-info`, `vulkaninfo`, `system_profiler`, and the
+interconnect pass's `nvidia-smi`. `xpu-smi` is reachable only through oneAPI,
+which is dropped. Checked at runtime too. Logging stand-ins for all nine tools
+2.5.5 can run were put first on `PATH`; smoke, DCE smoke and the full test
+suite ran none of them. A control program calling `registry_detect()` with exec
+allowed ran seven, so the stand-ins work. "Probes are pure reads" holds.
+
+### Changed — probe behaviour
+
+- **No phantom TPU.** Through 2.5.4 every `/sys/class/accel/accelN` node but
+  amdxdna's was a 32 GiB "Google TPU v4" (the 1.3.0 *Known issue*). 2.5.5 hands
+  each node to the backend its `device/driver` link names: `intel_vpu` → Intel
+  NPU, `amdxdna` → AMD XDNA, `habanalabs` → Gaudi, `qaic` → Qualcomm. Any other
+  driver is a TPU only on Google's PCI vendor (0x1ae0). On a Core Ultra laptop
+  that turns a phantom TPU into the Intel NPU it actually is. The old Intel NPU
+  path read `/sys/class/misc/intel_npu`, which the `intel_vpu` driver never
+  creates.
+- **Gaudi, Neuron, Cerebras and Graphcore are found in no-exec mode**, through
+  `/sys/class/accel` (habanalabs), `/dev/neuron*`, `/dev/cerebras*` and
+  `/dev/ipu*`. Their memory is not read from the board: Gaudi and Neuron are
+  sized by generation, Cerebras is a fixed 44 GiB and Graphcore 900 MiB.
+  `mihi_gpu_type` can now return `ACCEL_GAUDI`, `ACCEL_NEURON`,
+  `ACCEL_CEREBRAS` and `ACCEL_GRAPHCORE`.
+- **Asahi's Neural Engine is sized by generation**, not the 4 GiB fallback.
+- **Unchanged on mihi's path:** the no-exec Vulkan scan, which still gives NVIDIA
+  / Intel cards a fixed 4 / 2 GiB placeholder (2.5.5's heap sizing is the
+  `vulkaninfo` path). On archaemenid (Ryzen 5800H, Radeon iGPU, no
+  `/sys/class/accel` node) smoke output is identical to 1.3.0 apart from the
+  live free-memory and uptime lines.
+- **The log-level clamp is now belt and braces.** 2.5.5 gives ai-hwaccel its
+  own threshold (`hwlog_set_level`, `SK_WARN` by default) and logs only when
+  both it and sakshi allow it. So `_mihi_gpu_ensure()`'s save / clamp /
+  restore of the sakshi level changes nothing by default. It still caps a
+  consumer that raised ai-hwaccel's own level, for mihi's one detect call. Left
+  as is, and its comment says so.
+- Citations updated to match: the `src/gpu.cyr` header, the clamp comment,
+  `mihi_gpu_type`, `programs/smoke.cyr`, `docs/sources.md` Slice E and
+  `roadmap.md` M3.
+
+### Consumers
+
+- **Repin together:** `[deps.mihi] tag = "1.3.1"`, `[deps.ai-hwaccel] tag =
+  "2.5.5"`, `cyrius = "6.7.18"`. ai-hwaccel 2.5.5 does not build on a pin older
+  than 6.7.16.
+- **A consumer that does not supply bayan now prints ten** `undefined function
+  'bayan_json_v_*'` warnings, up from seven. 2.5.5's input checks in
+  `profile_from_json` added `is_bool`, `is_int` and `parse_buf_a`. They are still
+  unreachable: `profile_from_json*` has no caller outside `src/json_out.cyr`, and
+  the disk cache still never reads JSON back. DCE removes them.
+- **New `mihi_gpu_type` values** (above). A consumer that maps the type to a
+  label should handle them.
+- The sidecar is unchanged: `sys syscalls`. A scratch consumer on 6.7.18 +
+  ai-hwaccel 2.5.5 builds with one commit pin and no bayan, sigil, math or
+  slice file: 445,248 B, 219,968 B with `CYRIUS_DCE=1` (404,800 / 200,000 B on
+  6.7.9 with 2.4.2).
+
+### Verified
+
+Local replay of every `ci.yml` step, all green:
+
+- `cyrius deps --verify`: **115 verified, 0 failed**
+- `cyrius test tests/mihi.tcyr`: **143 passed, 0 failed**
+- smoke: exit 0, empty stderr, trailing `mihi smoke ok`, 0 build warnings
+- `cyrius fmt --check` and `cyrius lint src/*.cyr` clean
+- `cyrius distlib`: no drift and deterministic across runs; sidecar `sys syscalls`
+- cross-target: `--agnos programs/agnos_probe.cyr`, `--aarch64 programs/smoke.cyr`
+  and `--aarch64 tests/mihi.tcyr` compile with 0 warnings
+- all three `benches/*.bcyr` compile, now with no warning
+- DCE parity, the security scan and the docs job's required-files check
+- the no-exec stand-in check above
+
+| | 1.3.0 (6.7.9) | 1.3.1 (6.7.18) |
+|---|---:|---:|
+| `build/mihi-smoke` | 533,160 B | 593,520 B |
+| `CYRIUS_DCE=1` smoke | 217,768 B | 237,168 B |
+
+The growth is ai-hwaccel 2.5.5 (more detectors reachable in no-exec mode, and
+the audit's checks), bayan-json 1.11.1 and the toolchain together; not split
+further.
+
+Not run: a benchmark A/B, and runs on arm64 hardware or on AGNOS (the cross
+builds only compile). The new backends and the TPU fix were read in the
+ai-hwaccel source and seen in its changelog's measurements. This host has none
+of those devices.
+
 ## [1.3.0] — 2026-10-29 — cyrius 6.7.9
 
 **Toolchain `6.6.20 → 6.7.9`**, mihi's first release on the cyrius 6.7 language

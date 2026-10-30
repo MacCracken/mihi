@@ -106,28 +106,43 @@ emits is hidden from mihi's count.
 
 | Probe                    | Source                                                  | Authority                                                                                                                 | Notes |
 | ------------------------ | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | ----- |
-| `mihi_gpu_count`         | `ai-hwaccel::registry_detect_no_exec()` profile vec     | ai-hwaccel 2.4.2 `src/registry.cyr` (no-exec orchestrator) + per-backend sysfs paths                                        | Excludes the synthetic CPU profile. Lazy: first call across any `mihi_gpu_*` runs detection. |
-| `mihi_gpu_name(idx)`     | `ai-hwaccel::profile_device_name(p)`                    | ai-hwaccel 2.4.2 `src/detect/{rocm,vulkan,apple,tpu,intel,amd_xdna,edge,cloud_asic}.cyr` (each backend's name setter)         | ROCm prefers `/sys/class/drm/cardN/device/product_name`, falls back to a synthesized `AMD Radeon (PCI vendor:device)` string. The no-exec Vulkan scan names a card by vendor only: `NVIDIA GPU (Vulkan)` / `Intel GPU (Vulkan)`. Other safe backends hardcode vendor strings. Returns 0 on out-of-range idx. |
-| `mihi_gpu_memory_bytes(idx)` | `ai-hwaccel::profile_memory_bytes(p)`               | ROCm: `/sys/class/drm/cardN/device/mem_info_vram_total`; NPU/TPU backends: vendor-documented fixed sizes; Vulkan (no-exec): **no source** — a fixed 4 GiB (NVIDIA) / 2 GiB (Intel) estimate | Bytes (not MiB). The Vulkan figures are placeholders, not readings. Returns 0 - 1 on bad idx. |
+| `mihi_gpu_count`         | `ai-hwaccel::registry_detect_no_exec()` profile vec     | ai-hwaccel 2.5.5 `src/registry.cyr` (no-exec orchestrator) + per-backend sysfs / device-node paths                          | Excludes the synthetic CPU profile. Lazy: first call across any `mihi_gpu_*` runs detection. |
+| `mihi_gpu_name(idx)`     | `ai-hwaccel::profile_device_name(p)`                    | ai-hwaccel 2.5.5 `src/detect/{rocm,vulkan,apple,tpu,intel,amd_xdna,gaudi,neuron,edge,cloud_asic}.cyr` (each backend's name setter) | ROCm prefers `/sys/class/drm/cardN/device/product_name`, falls back to a synthesized `AMD Radeon (PCI vendor:device)` string. The no-exec Vulkan scan names a card by vendor only: `NVIDIA GPU (Vulkan)` / `Intel GPU (Vulkan)`. Other safe backends hardcode vendor strings. Returns 0 on out-of-range idx. |
+| `mihi_gpu_memory_bytes(idx)` | `ai-hwaccel::profile_memory_bytes(p)`               | ROCm: `/sys/class/drm/cardN/device/mem_info_vram_total`; NPU/TPU backends: vendor-documented fixed sizes; Gaudi / Neuron (no-exec): sized by generation, not read from the board; Cerebras 44 GiB and Graphcore 900 MiB fixed; Vulkan (no-exec): **no source** — a fixed 4 GiB (NVIDIA) / 2 GiB (Intel) estimate | Bytes (not MiB). The Vulkan, Cerebras and Graphcore figures are placeholders, not readings. Returns 0 - 1 on bad idx. |
 | `mihi_gpu_family(idx)`   | `ai-hwaccel::profile_family(p)`                         | `ai-hwaccel::accel_family(profile_accel_type(p))` mapping — pure function over the 20-variant `AcceleratorType` enum         | `FAMILY_GPU` / `FAMILY_NPU` / `FAMILY_TPU` / `FAMILY_AI_ASIC`. Returns 0 - 1 on bad idx. |
-| `mihi_gpu_type(idx)`     | `ai-hwaccel::profile_accel_type(p)`                     | per-backend `profile_new(ACCEL_*, ...)` at detection time                                                                  | One of the eleven `ACCEL_*` values a no-exec detector can produce on Linux: ROCM, VULKAN (`/sys/class/drm/card*/device/{vendor,device}`, NVIDIA and Intel only), METAL and APPLE_NPU (Asahi, `/proc/device-tree/compatible`), INTEL_NPU, AMD_XDNA, TPU, QUALCOMM, GROQ, SAMSUNG_NPU, MEDIATEK_APU. (`ACCEL_WIN_GPU` is Windows-only; `ACCEL_AGNOS_GPU` is in the no-exec mask but has no detector wired upstream yet.) **Known wrong value:** ai-hwaccel through 2.5.4 types every `/sys/class/accel/accel*` node except amdxdna's as `ACCEL_TPU` ("Google TPU v4", 32 GiB), driver unchecked, so an Intel NPU (`intel_vpu`), Gaudi or Cloud AI 100 node appears as a TPU. Fixed in ai-hwaccel 2.5.5, which needs cyrius ≥ 6.7.16. Returns 0 - 1 on bad idx. |
+| `mihi_gpu_type(idx)`     | `ai-hwaccel::profile_accel_type(p)`                     | per-backend `profile_new(ACCEL_*, ...)` at detection time                                                                  | One of the fifteen `ACCEL_*` values a no-exec detector can produce on Linux: ROCM, VULKAN (`/sys/class/drm/card*/device/{vendor,device}`, NVIDIA and Intel only), METAL and APPLE_NPU (Asahi, `/proc/device-tree/compatible`), INTEL_NPU, AMD_XDNA, TPU, GAUDI, QUALCOMM (the last four also from `/sys/class/accel` nodes, by their `device/driver` link: `intel_vpu`, `amdxdna`, `habanalabs`, `qaic`; any other driver is a TPU only on Google's PCI vendor 0x1ae0), NEURON (`/dev/neuron*`), CEREBRAS (`/dev/cerebras*`), GRAPHCORE (`/dev/ipu*`), GROQ, SAMSUNG_NPU, MEDIATEK_APU. (`ACCEL_WIN_GPU` is Windows-only; `ACCEL_AGNOS_GPU` has no detector wired upstream yet.) Through ai-hwaccel 2.5.4 (mihi ≤ 1.3.0) every `/sys/class/accel` node but amdxdna's was typed `ACCEL_TPU`, a phantom 32 GiB "Google TPU v4"; fixed at mihi 1.3.1. Returns 0 - 1 on bad idx. |
 
 The no-exec contract — that *none* of these probes spawn a
-subprocess, even transitively — is enforced by `ai-hwaccel`'s
-`builder_no_exec()` mask before any detector runs. See
-`ai-hwaccel::backend_uses_exec(b)` for the per-backend classifier
-(6 exec / 12 no-exec split, **re-measured against ai-hwaccel 2.4.2** at
-the 1.2.8 pin rather than re-stamped: `AIHW_BACKEND_COUNT` is 18 and
-`backend_uses_exec` (`src/types.cyr`) returns 1 for exactly six — CUDA,
-Gaudi, Neuron, Intel oneAPI, Cerebras, Graphcore. Windows (2.3.25),
-Apple (2.3.27) and Vulkan (2.3.29) left the exec set: each now has a
-spawn-free path, and Vulkan's leaves `amdgpu` cards to ROCm.
-`BACKEND_AGNOS_GPU` is reserved upstream with no detector dispatch, so
-nothing runs for it).
+subprocess, even transitively — is enforced inside ai-hwaccel.
+**Re-measured against ai-hwaccel 2.5.5** at the 1.3.1 pin rather than
+re-stamped. `registry_detect_no_exec()` is
+`registry_detect_with_opts(builder_native(), 0)` (`src/registry.cyr`):
+
+- `builder_native()` drops the backends for which `backend_needs_exec`
+  (`src/types.cyr`) is 1, CUDA and Intel oneAPI, which find nothing
+  without a tool. That leaves 16 of `AIHW_BACKEND_COUNT` 18 running.
+- `allow_exec` 0 reaches every detector and the interconnect pass. Each
+  vendor-tool run (`hl-smi`, `neuron-ls`, `cerebras_cli`, `gc-info`,
+  `vulkaninfo`, `system_profiler`, the NVLink `nvidia-smi`) sits behind
+  `allow_exec == 1`. Gaudi, Neuron, Cerebras and Graphcore read their
+  device nodes instead, which they did not do through 2.5.4.
+- Through 2.5.4 the same entry point used `builder_no_exec()`, which
+  masked the six `backend_uses_exec` backends. At 2.4.2 that set was
+  CUDA, Gaudi, Neuron, Intel oneAPI, Cerebras and Graphcore. Windows
+  (2.3.25), Apple (2.3.27) and Vulkan (2.3.29) had already left it.
+
+Checked at runtime as well: logging stand-ins for all nine tools
+ai-hwaccel 2.5.5 can run, placed first on `PATH`, record no call during
+smoke or the test suite. A control program calling `registry_detect()`
+runs seven of them. `BACKEND_AGNOS_GPU` is reserved upstream with no
+detector dispatch, so nothing runs for it.
 
 One non-citation note, because it is easy to mistake for a probe
 behavior: since 1.2.2 `_mihi_gpu_ensure()` saves the caller's `sakshi`
 log level, clamps it to `SK_WARN` for the duration of the single
 `registry_detect_no_exec()` call, and restores it. ai-hwaccel 2.3.x
-logs its detect pass at `SK_INFO`, and a library has no business
-writing to a consumer's stderr. No probe *value* is affected.
+through 2.5.4 logged its detect pass at `SK_INFO`, and a library has no
+business writing to a consumer's stderr. Since 2.5.5 ai-hwaccel also
+keeps its own threshold (`hwlog_set_level`, `SK_WARN` by default) and
+logs only when both allow it, so by default the clamp changes nothing.
+No probe *value* is affected.

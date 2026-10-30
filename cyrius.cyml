@@ -4,7 +4,7 @@ version = "${file:VERSION}"
 description = "मिही / mihi — system-info probe library (CPU / RAM / GPU / kernel / uptime / distro / hostname). Substrate for iam, chakshu, and other tools that need 'tell me about this box'. Maori: the formal self-introduction ceremony."
 license = "GPL-3.0-only"
 language = "cyrius"
-cyrius = "6.7.9"
+cyrius = "6.7.18"
 
 [build]
 # The in-tree smoke binary: exercises the whole probe surface end to end.
@@ -25,7 +25,7 @@ stdlib = ["syscalls", "string", "alloc", "io", "result", "vec", "sys", "sakshi",
 # Accelerator detection. mihi calls registry_detect_no_exec() only.
 [deps.ai-hwaccel]
 git = "https://github.com/MacCracken/ai-hwaccel.git"
-tag = "2.4.2"
+tag = "2.5.5"
 modules = ["dist/ai-hwaccel.cyr"]
 
 # Optional, so consumers never resolve it (features are read from the root
@@ -35,7 +35,7 @@ modules = ["dist/ai-hwaccel.cyr"]
 [deps.bayan]
 optional = true
 git = "https://github.com/MacCracken/bayan.git"
-tag = "1.5.14"
+tag = "1.11.1"
 modules = ["dist/bayan-json.cyr"]
 
 [features]

@@ -43,16 +43,16 @@ verify records `sys` for `UTS_MACHINE`. The seed stays.
 
 ## bayan: the thin module, optional, never the monolith
 
-`dist/ai-hwaccel.cyr` references seven `bayan_json_v_*` functions and defines
-none. They sit in its `profile_from_json` deserialize path, which nothing in
+`dist/ai-hwaccel.cyr` references ten `bayan_json_v_*` functions (seven before
+ai-hwaccel 2.5.5) and defines none. They sit in its `profile_from_json` deserialize path, which nothing in
 ai-hwaccel calls, so they are unreachable. ai-hwaccel declares bayan optional
 and leaves the names to a consumer that wants that path. mihi never calls it.
 
-If nothing in the verify unit defines them, `distlib` (measured on 6.6.20 and
-6.7.9) looks the names up in the stdlib snapshot, finds the bayan monolith (`lib/bayan.cyr`:
+If nothing in the verify unit defines them, `distlib` (measured on 6.6.20,
+6.7.9 and 6.7.18) looks the names up in the stdlib snapshot, finds the bayan monolith (`lib/bayan.cyr`:
 json, toml, cyml, csv, base64, bigint, u128, yaml, pdf) and records `bayan` as
 a requirement of mihi's bundle. mihi's bundle never references those names.
-On 6.7.9 that sidecar is `sys bayan syscalls`. Measured on a minimal consumer
+On 6.7.9 and 6.7.18 that sidecar is `sys bayan syscalls`. Measured on a minimal consumer
 at 6.6.20, the sidecar 6.6.20 derived unaided (`sigil bayan sys syscalls`) took
 the binary from 404,832 B to 1,804,072 B (689,960 B with DCE).
 
@@ -70,13 +70,15 @@ So mihi declares `[deps.bayan]` on bayan's **thin** JSON module
   `bayan-json.cyr`.
 - **Move the tag with the toolchain.** Use the bayan release whose own
   `cyrius` pin is mihi's (1.5.14 for 6.7.9). If none pins it exactly, use the
-  tag that cyrius folds into its stdlib. `cyrius deps` notes when ai-hwaccel's
+  tag that cyrius folds into its stdlib (1.11.1 for 6.7.18, also the one
+  ai-hwaccel 2.5.5 pins). `cyrius deps` notes when ai-hwaccel's
   optional bayan wants a different tag; mihi's root pin wins, and that is
   fine.
 
 Expected warnings follow from this. mihi's own builds print no `undefined
-function` lines. A consumer that does not supply bayan prints the seven
-`bayan_json_v_*` warnings from `lib/ai-hwaccel.cyr`; DCE removes them. A
+function` lines. A consumer that does not supply bayan prints the
+`bayan_json_v_*` warnings from `lib/ai-hwaccel.cyr` (ten at ai-hwaccel 2.5.5);
+DCE removes them. A
 consumer must not add the bayan monolith to silence them.
 
 ## Windows-only names in the distlib report
