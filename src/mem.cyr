@@ -13,6 +13,9 @@
 # swapping — what every monitoring tool reports as "free." See
 # kernel commit 34e431b0ae39.
 
+# uname(2) / sysinfo(2) wrappers and their per-target UTS_* / SI_* offsets.
+include "lib/sys.cyr"
+
 # MIHI_MEM_KB_MAX — largest kB value that survives the * 1024 scaling
 # without wrapping i64: floor(2^63 - 1 / 1024) = 2^53 - 1, which is
 # ~9 EiB of RAM. Anything at or under this is scaled; anything over it

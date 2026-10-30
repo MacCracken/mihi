@@ -29,6 +29,9 @@
 # distro is a Linux-userland concept (the file lives in initramfs/root)
 # and is not on the native code path.
 
+# uname(2) / sysinfo(2) wrappers and their per-target UTS_* / SI_* offsets.
+include "lib/sys.cyr"
+
 # ----- mihi_hostname — uname.nodename --------------------------------
 
 # Return a pointer to the null-terminated nodename field within `uts`.

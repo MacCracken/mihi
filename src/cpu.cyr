@@ -8,6 +8,9 @@
 # read-into-caller-buffer convention; cpu_count's return is an
 # integer so it uses a stack-local scratch buffer.
 
+# uname(2) / sysinfo(2) wrappers and their per-target UTS_* / SI_* offsets.
+include "lib/sys.cyr"
+
 # `cyrius build --agnos` does NOT predefine CYRIUS_ARCH_X86 (only a native x86 build
 # does), so the CPUID brand asm below (guarded #ifdef CYRIUS_ARCH_X86) was compiled
 # OUT on agnos → CPU rendered "(unknown)" while iam ran fine. agnos IS x86, so map it:

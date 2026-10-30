@@ -81,12 +81,13 @@ fn main() {
     }
     print("distro:  ", 9); println(distro);
 
-    # Slice E — accelerator probes via ai-hwaccel 2.3.22 no-exec API.
+    # Slice E — accelerator probes via ai-hwaccel 2.4.2 no-exec API.
     # First call lazy-initializes the module-level registry cache; the
     # subsequent name/memory calls are O(n) walks of the cached vec.
-    # No subprocess spawning anywhere on this path — only the eight
-    # sysfs-only backends run (ROCm, Intel NPU, AMD XDNA, TPU,
-    # Qualcomm, Groq, Samsung NPU, MediaTek APU).
+    # No subprocess spawning anywhere on this path — only the sysfs /
+    # device-tree backends run (ROCm, Vulkan's sysfs scan, Apple on
+    # Asahi, Intel NPU, AMD XDNA, TPU, Qualcomm, Groq, Samsung NPU,
+    # MediaTek APU).
     var ngpu: i64 = mihi_gpu_count();
     print("gpu cnt: ", 9); println_int(ngpu);
 

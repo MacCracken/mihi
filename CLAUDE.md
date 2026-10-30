@@ -76,6 +76,7 @@ include "lib/mihi.cyr"   // after `cyrius deps` resolves the [deps.mihi] entry
 - Do not modify `lib/` files (vendored stdlib / dep symlinks managed by `cyrius deps`)
 - Do not add a `fn main()` body to library modules — the library entry is `src/main.cyr`'s include-only re-export shape
 - Do not hardcode toolchain versions in CI YAML — `cyrius = "X.Y.Z"` in `cyrius.cyml` is the source of truth
+- `cyrius.cyml` is a manifest, not a ledger or changelog — keys plus at most a short pointer comment per section. Pin history and release notes go in CHANGELOG, live state in `docs/development/state.md`, durable constraints in `docs/architecture/`
 - Do not add probes outside the planned module set without an ADR — the module shape is part of the v1.0 contract
 
 ## Process

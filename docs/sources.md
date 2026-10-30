@@ -106,21 +106,24 @@ emits is hidden from mihi's count.
 
 | Probe                    | Source                                                  | Authority                                                                                                                 | Notes |
 | ------------------------ | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | ----- |
-| `mihi_gpu_count`         | `ai-hwaccel::registry_detect_no_exec()` profile vec     | ai-hwaccel 2.3.22 `src/registry.cyr` (no-exec orchestrator) + per-backend sysfs paths                                       | Excludes the synthetic CPU profile. Lazy: first call across any `mihi_gpu_*` runs detection. |
-| `mihi_gpu_name(idx)`     | `ai-hwaccel::profile_device_name(p)`                    | ai-hwaccel 2.3.22 `src/detect/{rocm,tpu,gaudi,neuron,intel,amd_xdna,edge,cloud_asic}.cyr` (each backend's name setter)        | ROCm prefers `/sys/class/drm/cardN/device/product_name`, falls back to a synthesized `AMD Radeon (PCI vendor:device)` string. Other safe backends hardcode vendor strings. Returns 0 on out-of-range idx. |
-| `mihi_gpu_memory_bytes(idx)` | `ai-hwaccel::profile_memory_bytes(p)`               | ROCm: `/sys/class/drm/cardN/device/mem_info_vram_total`; NPU/TPU backends: vendor-documented fixed sizes                   | Bytes (not MiB). Returns 0 - 1 on bad idx. |
-| `mihi_gpu_family(idx)`   | `ai-hwaccel::profile_family(p)`                         | `ai-hwaccel::accel_family(profile_accel_type(p))` mapping — pure function over the 18-variant `AcceleratorType` enum         | `FAMILY_GPU` / `FAMILY_NPU` / `FAMILY_TPU` / `FAMILY_AI_ASIC`. Returns 0 - 1 on bad idx. |
-| `mihi_gpu_type(idx)`     | `ai-hwaccel::profile_accel_type(p)`                     | per-backend `profile_new(ACCEL_*, ...)` at detection time                                                                  | One of the eight `ACCEL_*` values a no-exec detector can actually produce: ROCM, INTEL_NPU, AMD_XDNA, TPU, QUALCOMM, GROQ, SAMSUNG_NPU, MEDIATEK_APU. (`ACCEL_AGNOS_GPU` is in the no-exec mask as of 2.3.x but has no detector wired upstream yet.) Returns 0 - 1 on bad idx. |
+| `mihi_gpu_count`         | `ai-hwaccel::registry_detect_no_exec()` profile vec     | ai-hwaccel 2.4.2 `src/registry.cyr` (no-exec orchestrator) + per-backend sysfs paths                                        | Excludes the synthetic CPU profile. Lazy: first call across any `mihi_gpu_*` runs detection. |
+| `mihi_gpu_name(idx)`     | `ai-hwaccel::profile_device_name(p)`                    | ai-hwaccel 2.4.2 `src/detect/{rocm,vulkan,apple,tpu,intel,amd_xdna,edge,cloud_asic}.cyr` (each backend's name setter)         | ROCm prefers `/sys/class/drm/cardN/device/product_name`, falls back to a synthesized `AMD Radeon (PCI vendor:device)` string. The no-exec Vulkan scan names a card by vendor only: `NVIDIA GPU (Vulkan)` / `Intel GPU (Vulkan)`. Other safe backends hardcode vendor strings. Returns 0 on out-of-range idx. |
+| `mihi_gpu_memory_bytes(idx)` | `ai-hwaccel::profile_memory_bytes(p)`               | ROCm: `/sys/class/drm/cardN/device/mem_info_vram_total`; NPU/TPU backends: vendor-documented fixed sizes; Vulkan (no-exec): **no source** — a fixed 4 GiB (NVIDIA) / 2 GiB (Intel) estimate | Bytes (not MiB). The Vulkan figures are placeholders, not readings. Returns 0 - 1 on bad idx. |
+| `mihi_gpu_family(idx)`   | `ai-hwaccel::profile_family(p)`                         | `ai-hwaccel::accel_family(profile_accel_type(p))` mapping — pure function over the 20-variant `AcceleratorType` enum         | `FAMILY_GPU` / `FAMILY_NPU` / `FAMILY_TPU` / `FAMILY_AI_ASIC`. Returns 0 - 1 on bad idx. |
+| `mihi_gpu_type(idx)`     | `ai-hwaccel::profile_accel_type(p)`                     | per-backend `profile_new(ACCEL_*, ...)` at detection time                                                                  | One of the eleven `ACCEL_*` values a no-exec detector can produce on Linux: ROCM, VULKAN (`/sys/class/drm/card*/device/{vendor,device}`, NVIDIA and Intel only), METAL and APPLE_NPU (Asahi, `/proc/device-tree/compatible`), INTEL_NPU, AMD_XDNA, TPU, QUALCOMM, GROQ, SAMSUNG_NPU, MEDIATEK_APU. (`ACCEL_WIN_GPU` is Windows-only; `ACCEL_AGNOS_GPU` is in the no-exec mask but has no detector wired upstream yet.) Returns 0 - 1 on bad idx. |
 
 The no-exec contract — that *none* of these probes spawn a
 subprocess, even transitively — is enforced by `ai-hwaccel`'s
 `builder_no_exec()` mask before any detector runs. See
 `ai-hwaccel::backend_uses_exec(b)` for the per-backend classifier
-(9 exec / 9 no-exec split, **re-measured against ai-hwaccel 2.3.22** at
-the 1.2.6 pin rather than re-stamped: `AIHW_BACKEND_COUNT` is 18 and
-`backend_uses_exec` returns 1 for exactly nine — `BACKEND_WINDOWS`
-joined the exec set and `BACKEND_AGNOS_GPU` the no-exec one; the latter
-is reserved upstream with no detector dispatch, so nothing runs for it).
+(6 exec / 12 no-exec split, **re-measured against ai-hwaccel 2.4.2** at
+the 1.2.8 pin rather than re-stamped: `AIHW_BACKEND_COUNT` is 18 and
+`backend_uses_exec` (`src/types.cyr`) returns 1 for exactly six — CUDA,
+Gaudi, Neuron, Intel oneAPI, Cerebras, Graphcore. Windows (2.3.25),
+Apple (2.3.27) and Vulkan (2.3.29) left the exec set: each now has a
+spawn-free path, and Vulkan's leaves `amdgpu` cards to ROCm.
+`BACKEND_AGNOS_GPU` is reserved upstream with no detector dispatch, so
+nothing runs for it).
 
 One non-citation note, because it is easy to mistake for a probe
 behavior: since 1.2.2 `_mihi_gpu_ensure()` saves the caller's `sakshi`

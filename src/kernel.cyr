@@ -14,6 +14,9 @@
 #   Caller allocates uts[UTS_SIZE] on its stack, calls mihi_uname(uts)
 #   once, then reads whichever fields it wants. mihi owns no state.
 
+# uname(2) / sysinfo(2) wrappers and their per-target UTS_* / SI_* offsets.
+include "lib/sys.cyr"
+
 # Fill `uts` (must point to at least UTS_SIZE bytes — 390 on Linux,
 # 64 on AGNOS) with the current kernel's utsname struct. Returns
 # Result: Ok(uts) or Err.

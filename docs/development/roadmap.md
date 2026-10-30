@@ -76,14 +76,17 @@ buffers, no probe-internal allocation.
   `detect_interconnects`. Mihi pinned `[deps.ai-hwaccel] tag = "2.2.6"`
   at this milestone (bumped from 2.2.5 in 0.4.1, see below) and calls
   only `registry_detect_no_exec()` — the no-exec contract is enforced
-  on the ai-hwaccel side. **Current pin: 2.3.22** (1.2.6); the exec set
-  is nine of eighteen backends there, `BACKEND_WINDOWS` having joined
-  it — re-measured at the 1.2.6 bump. See [`state.md`](state.md) for
-  the live pin.
+  on the ai-hwaccel side. **Current pin: 2.4.2** (1.2.8); the exec set
+  is six of eighteen backends there (CUDA, Gaudi, Neuron, Intel oneAPI,
+  Cerebras, Graphcore), Windows, Apple and Vulkan having become native
+  in 2.3.25 / 2.3.27 / 2.3.29. Re-measured at the 1.2.8 bump. See
+  [`state.md`](state.md) for the live pin.
 - ✅ **Safe backends mihi sees**: ROCm, Intel NPU, AMD XDNA, TPU,
   Qualcomm, Groq, Samsung NPU, MediaTek APU — plus the sysfs
   post-passes (`enrich_bandwidth/pcie/numa`, `detect_storage`,
-  `detect_environment`).
+  `detect_environment`). Since 1.2.8 (ai-hwaccel 2.3.27 / 2.3.29) also
+  Vulkan's `/sys/class/drm` scan (NVIDIA and Intel cards; AMD is left
+  to ROCm) and, on Asahi Linux, Apple's device-tree check.
 - ✅ **Acceptance**: smoke prints `gpu cnt: 1 / gpu: AMD Radeon
   (PCI 0x1002:0x1638) / gpu MiB: 3072` on archaemenid (Ryzen 5800H +
   Radeon iGPU).

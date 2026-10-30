@@ -5,6 +5,31 @@
 
 ## Version
 
+**1.2.8** — released 2026-10-29. Toolchain and dependency cut: cyrius
+**6.6.2 → 6.6.20**, ai-hwaccel **2.3.22 → 2.4.2**, and a new *optional*
+bayan **1.5.12** dep on the thin `dist/bayan-json.cyr` module. API
+unchanged; 143/143.
+
+The published sidecar `dist/mihi.deps` is now **`sys syscalls`**, down from
+the 20-leaf copy of `[deps] stdlib` that 6.5.x wrote. Since cyrius 6.6.18 the
+sidecar is derived by `distlib`'s compile-verify, and 6.6.20's version of it
+mis-credits two leaves to mihi: `sigil` (for `UTS_MACHINE`, the first
+declarer in directory order) and the `bayan` monolith (for ai-hwaccel's
+unreachable `bayan_json_v_*` names). An explicit `include "lib/sys.cyr"` in the
+four sys-using modules and the optional bayan-json dep stop both. Measured on a
+minimal consumer, the unaided sidecar would have taken it from 404,832 B to
+1,804,072 B. The why is in [architecture 001](../architecture/001-bundle-and-dependency-shape.md).
+
+`[deps] stdlib` went from 20 leaves to 10, the ones mihi's own sources call.
+Behaviour change: ai-hwaccel 2.3.29's no-exec Vulkan sysfs scan means the GPU
+probes now find NVIDIA and Intel GPUs on Linux. Their names are vendor
+placeholders and their memory is a fixed 4 / 2 GiB estimate. AMD hosts are
+unchanged. `cyrius.cyml` was cut back to a manifest; its history and rationale
+moved here, to the CHANGELOG and to architecture 001.
+
+**1.2.7** — released 2026-09-11. Toolchain `6.6.0 → 6.6.2`, no source
+change.
+
 **1.2.6** — released 2026-09-07. **Toolchain cut that carries a real
 API break.** Cyrius pin **6.5.35 → 6.6.0** (39 releases); ai-hwaccel
 **2.3.19 → 2.3.22**. 6.6.0 makes `Result` / `Option` / `Either` the
@@ -254,27 +279,25 @@ the same day (host identity); M1 covered kernel + CPU + memory.
 
 ## Toolchain
 
-- **Cyrius pin**: `6.6.0` (in `cyrius.cyml [package].cyrius`). Bumped
-  6.5.35 → 6.6.0 at the 1.2.6 cut (39 releases), which also clears the
-  wrapper's standing `6.5.36 enum Critical` warning (enum constants
-  ≥ 2^62 read back as `-1`) that the 6.5.35 pin had carried since 1.2.2.
-  `cyrius lib sync --full` re-vendors the version-matched snapshot:
-  **109 stdlib modules** (40 changed at this cut), and `cyrius deps`
-  then adds the transitive `lib/hashseed.cyr` — new at 6.5.39, pulled
-  by the declared `hashmap` leaf. **`lib sync` alone no longer yields a
-  complete `lib/`**; the deps pass finishes it. Plus
-  `lib/ai-hwaccel.cyr`, the one git dep — 110 hashed lock entries and
-  **one** commit pin.
-- **`[deps] stdlib`** (20 modules): `string`, `fmt`, `alloc`, `io`,
-  `vec`, `str`, `slice`, `syscalls`, `sys`, `assert`, `fs`, `tagged`,
-  `process`, `fnptr`, `thread`, `freelist`, `hashmap`, `sakshi`, `ct`,
-  `bench`. Most are there for the ai-hwaccel bundle, not for
-  mihi's own probes — the bundle is one concatenation, so the parser
-  needs the full set in scope and DCE drops what the binary doesn't
-  reach. `sakshi` joined at 1.2.2 (ai-hwaccel 2.3.x logging); `bayan`
-  was **removed at 1.2.5** — it was cover for a dependency's dependency
-  and cost every consumer a 641 KB link. Do not re-add it; if mihi ever
-  genuinely needs JSON, take `dist/bayan-json.cyr` as a git dep.
+- **Cyrius pin**: `6.6.20` (in `cyrius.cyml [package].cyrius`). Bumped
+  6.6.2 → 6.6.20 at the 1.2.8 cut. `lib/` is the full version-matched
+  snapshot, re-vendored from empty on a pin move: `rm -rf lib
+  cyrius.lock`, `cyrius lib sync --full`, `cyrius deps`, `cyrius deps
+  --verify`. Deleting the lock is required because 6.6.20 keeps an old
+  tag's commit line after a tag bump. That gives **113 stdlib files**
+  (98 changed at this cut; `alloc_cx`, `poison`, `tls_hostid` new), plus
+  `lib/ai-hwaccel.cyr` and `lib/bayan-json.cyr` from the two git deps:
+  **115 hashed lock entries, two commit pins**, and a trailing
+  `cyrius 6.6.20` line.
+- **`[deps] stdlib`** (10 modules): `syscalls`, `string`, `alloc`, `io`,
+  `result`, `vec`, `sys`, `sakshi`, `assert` (tests), `bench` (benches).
+  This is mihi's own build footprint and nothing else. Since cyrius
+  6.6.18 the published sidecar is derived by `distlib`'s compile-verify,
+  so this list no longer reaches consumers. Cut from 20 at 1.2.8: `fmt`,
+  `str`, `slice`, `ct` were never used, and `fs`, `tagged`, `process`,
+  `fnptr`, `thread`, `freelist`, `hashmap` were carried for older
+  ai-hwaccel bundles. `bayan` was removed at 1.2.5 and must never come
+  back as a stdlib leaf ([architecture 001](../architecture/001-bundle-and-dependency-shape.md)).
 - **Pruned orphans**: `lib/` carried ten modules the 6.5.35 snapshot no
   longer ships — `agnosys` + `agnosys-core` (retired at cyrius 6.2.37;
   mihi rewired off the dep at 1.1.3), `base64` / `bigint` / `csv` /
@@ -304,19 +327,21 @@ gate), M5 (iam consumer), M6 (chakshu consumer). Signatures, return
 shapes, and error semantics are now contract. Post-freeze work has all
 been additive or internal: AGNOS build-target branches (1.1.2), the
 `sys.cyr` rewire (1.1.3), the CPUID CPU-model path (1.2.0 / 1.2.1), and
-the log-level clamp (1.2.2).
+the log-level clamp (1.2.2). The one break was forced by the toolchain:
+`mihi_uname`'s value-form `Result` (1.2.6).
 
 - `src/types.cyr` (4 lines) — shared types (empty; `MihiInfo` deferred per ADR 0001)
 - `src/io.cyr` (149) — `_mihi_read_probe_file`, the one `/proc` + `/sys` read path: looped reads, bounded `-EINTR` retry, truncation detection (`MIHI_IO_WHOLE` vs `MIHI_IO_PREFIX`), `O_NONBLOCK` + `O_CLOEXEC`. Added at 1.2.3 per [ADR 0003](../adr/0003-shared-probe-read.md); inert on AGNOS
-- `src/cpu.cyr` (388) — `mihi_cpu_arch` ✅ + `mihi_cpu_count` ✅ + `mihi_cpu_model` ✅ (+ `mihi_parse_cpu_range` / `mihi_parse_cpu_model` pure-function helpers, and `mihi_cpu_model_cpuid` / `mihi_cpu_brand_fill` — the x86 CPUID brand-string path the AGNOS build dispatches to)
-- `src/mem.cyr` (152) — `mihi_mem_total` ✅ + `mihi_mem_free` ✅ (+ `mihi_find_meminfo_field` / `mihi_parse_meminfo_kb` / `mihi_extract_meminfo_bytes` helpers)
-- `src/kernel.cyr` (82) — `mihi_uname` wrapper over `sys_uname` (`Result`-wrapped since 1.1.3; **value-form pair since 1.2.6** — callers bind `var t, v =`, see the contract block on the function) + `mihi_kernel_name` ✅ + `mihi_kernel_version` ✅
-- `src/host.cyr` (196) — `mihi_hostname` ✅ + `mihi_uptime_secs` ✅ + `mihi_distro` ✅ (+ `mihi_parse_uptime_secs` / `mihi_find_osrelease_key` / `mihi_parse_osrelease_value` helpers)
-- `src/gpu.cyr` (168) — `mihi_gpu_count` ✅ + `mihi_gpu_name` ✅ + `mihi_gpu_memory_bytes` ✅ + `mihi_gpu_family` ✅ + `mihi_gpu_type` ✅ (module-level singleton cache via `_mihi_gpu_ensure`; first call runs `registry_detect_no_exec()` under a save/clamp/restore of the caller's `sakshi` log level)
+- `src/cpu.cyr` (391) — `mihi_cpu_arch` ✅ + `mihi_cpu_count` ✅ + `mihi_cpu_model` ✅ (+ `mihi_parse_cpu_range` / `mihi_parse_cpu_model` pure-function helpers, and `mihi_cpu_model_cpuid` / `mihi_cpu_brand_fill` — the x86 CPUID brand-string path the AGNOS build dispatches to)
+- `src/mem.cyr` (155) — `mihi_mem_total` ✅ + `mihi_mem_free` ✅ (+ `mihi_find_meminfo_field` / `mihi_parse_meminfo_kb` / `mihi_extract_meminfo_bytes` helpers)
+- `src/kernel.cyr` (85) — `mihi_uname` wrapper over `sys_uname` (`Result`-wrapped since 1.1.3; **value-form pair since 1.2.6** — callers bind `var t, v =`, see the contract block on the function) + `mihi_kernel_name` ✅ + `mihi_kernel_version` ✅
+- `src/host.cyr` (199) — `mihi_hostname` ✅ + `mihi_uptime_secs` ✅ + `mihi_distro` ✅ (+ `mihi_parse_uptime_secs` / `mihi_find_osrelease_key` / `mihi_parse_osrelease_value` helpers)
+- `src/gpu.cyr` (176) — `mihi_gpu_count` ✅ + `mihi_gpu_name` ✅ + `mihi_gpu_memory_bytes` ✅ + `mihi_gpu_family` ✅ + `mihi_gpu_type` ✅ (module-level singleton cache via `_mihi_gpu_ensure`; first call runs `registry_detect_no_exec()` under a save/clamp/restore of the caller's `sakshi` log level)
 - `src/main.cyr` (24) — convenience re-export (consumed by smoke + tests; not in distlib bundle)
 - `programs/agnos_probe.cyr` (65) — the AGNOS-clean probe subset (no `gpu.cyr`, so no ai-hwaccel); prints raw values with no early return so one QEMU boot shows the whole surface. Driven by `scripts/mihi-agnos-verify.py`
-- `programs/smoke.cyr` (120) — smoke binary (Linux + aarch64 only — see the 1.2.4 note); prints `kernel / release / arch / host / model / cpus / mem MiB / free MiB / uptime / distro / gpu cnt / gpu / gpu MiB`
-- `dist/mihi.cyr` (1164 lines; 1139 by `cyrius distlib`'s own count) — the consumable bundle; `dist/mihi.deps` is the stdlib-leaf sidecar beside it (cyrius 6.5.x), both CI-gated against drift
+- `programs/smoke.cyr` (121) — smoke binary (Linux + aarch64 only — see the 1.2.4 note); prints `kernel / release / arch / host / model / cpus / mem MiB / free MiB / uptime / distro / gpu cnt / gpu / gpu MiB`
+- `dist/mihi.cyr` (1188 lines; 1159 by `cyrius distlib`'s own count) — the consumable bundle, opening with a compile-verified `# Requires` block; `dist/mihi.deps` is the stdlib-leaf sidecar beside it (`sys`, `syscalls`), both CI-gated against drift
+- `cpu.cyr`, `mem.cyr`, `kernel.cyr` and `host.cyr` each `include "lib/sys.cyr"` (1.2.8). A no-op in mihi's own build; in the bundle it seeds the sidecar — see [architecture 001](../architecture/001-bundle-and-dependency-shape.md)
 
 ## Tests
 
@@ -361,29 +386,39 @@ cyrius deps
 cyrius build programs/smoke.cyr build/mihi-smoke
 ./build/mihi-smoke            # 11+ lines incl. gpu cnt / gpu / gpu MiB + "mihi smoke ok", exit 0, empty stderr
 cyrius test tests/mihi.tcyr   # 143/143 pass (144/144 on aarch64)
-cyrius build --agnos programs/smoke.cyr build/mihi-smoke-agnos   # sovereign-target cross-build
+cyrius build --agnos programs/agnos_probe.cyr build/mihi-agnos-probe   # sovereign-target cross-build (smoke links gpu.cyr, which agnos can't run)
 ```
 
-Build is clean as of 1.2.6 / cyrius 6.6.0 / ai-hwaccel 2.3.22 —
-manifest pin and installed wrapper agree, `lib/` matches the pinned
-snapshot exactly, and smoke's stderr is empty (ai-hwaccel's detect
-logging is clamped for the duration of the one detect call; see the
-1.2.2 note above).
+Build is clean as of 1.2.8 / cyrius 6.6.20 / ai-hwaccel 2.4.2 / bayan
+1.5.12. The manifest pin and the installed wrapper agree, `lib/`
+matches the pinned snapshot exactly, and smoke's stderr is empty
+(ai-hwaccel's detect logging is clamped for the one detect call; see
+the 1.2.2 note above). The smoke build, the test build and all three
+cross-target builds print **0 warnings**. Sizes: smoke 498,464 B,
+`CYRIUS_DCE=1` smoke 215,840 B.
 
-Two warnings are expected and neither is mihi's to fix: seven
-`undefined function 'bayan_json_v_*'` (the visible half of ai-hwaccel
-2.3.20's feature gate — verified unreachable, DCE-eliminated), and, on
-`--aarch64` only, `lib/io.cyr:442: raw syscall 32 is x86_64 dup` — in
-the **vendored stdlib**, not mihi's 149-line `src/io.cyr`, and
-CLAUDE.md forbids hand-editing `lib/`.
+Expected output that is not mihi's to fix:
+
+- `benches/probe_paths.bcyr`: `large static data` (its fixture buffers;
+  predates 1.2.8).
+- `cyrius distlib`: `O_CLOEXEC`, `O_NONBLOCK`, `EINTR` undefined on
+  `x86_64-windows`. mihi does not target Windows.
+- In a *consumer* that does not supply bayan: seven `undefined function
+  'bayan_json_v_*'` from `lib/ai-hwaccel.cyr`, unreachable and removed
+  by DCE. mihi's own builds no longer print them, because the optional
+  bayan-json dep defines them in-tree.
+
+The aarch64 `lib/io.cyr:442: raw syscall 32 is x86_64 dup` warning that
+1.2.2–1.2.7 carried is gone; upstream fixed it in the vendored stdlib.
 
 ## Dependencies
 
 Direct (declared in `cyrius.cyml`):
 
-- **stdlib** — mihi's own probes need string, fmt, alloc, io, vec, str, slice, syscalls, `sys`, assert (+ ct, bench). The rest — fs, tagged, process, fnptr, thread, freelist, hashmap, `sakshi` — are there for the ai-hwaccel bundle: it is one concatenation, so the parser needs every module its modules reference in scope, and DCE drops unused code from the linked binary. `sakshi` joined at 1.2.2 for ai-hwaccel 2.3.x's detect-path logging. `bayan` left at 1.2.5 and must not come back — see the Toolchain note above.
+- **stdlib** — the 10 leaves mihi's own sources call: `syscalls`, `string`, `alloc`, `io`, `result` (`mihi_uname`'s return), `vec` and `sakshi` (`gpu.cyr`), `sys`, plus `assert` for the tests and `bench` for the benches. Consumers do not inherit the list: their copy of mihi's needs is `dist/mihi.deps`, derived by `distlib`. `bayan` left at 1.2.5 and must never come back as a stdlib leaf; see [architecture 001](../architecture/001-bundle-and-dependency-shape.md).
 - **`sys` (stdlib)** — the `uname(2)` / `sysinfo(2)` plumbing, with per-target `UTS_*` / `SI_*` offsets for Linux **and** AGNOS. mihi's four identity probes (kernel name / kernel version / cpu arch / hostname) share one `sys_uname` call. This replaced the `[deps.agnosys]` git dep at 1.1.3, when cyrius retired the stale stdlib agnosys snapshot at 6.2.37. See [ADR 0001](../adr/0001-shared-uts-buffer.md).
-- **ai-hwaccel 2.3.22** (git dep) — accelerator detection. 2.2.5 was the first release with the no-exec contract (`registry_detect_no_exec()` masks off the subprocess-shelling backends — 9 of 18 as of 2.3.18, after `BACKEND_WINDOWS` joined the exec set); without it mihi couldn't honor the "probes are pure reads" rule. 2.2.6 closed the device-name + bundling gaps mihi's 0.4.0 integration surfaced. The 2.3.x line brought three ecosystem symbol de-collisions (`HWA_ERR_*`, `hw_registry_new`, `AIHW_BACKEND_COUNT` / `AiHwBackend` / `aihw_path_exists`), of which only `hw_registry_new` reaches mihi — in the test suite's synthetic-registry construction, not the probe source. 2.3.x also reserves `BACKEND_AGNOS_GPU` in the no-exec mask with **no detector dispatch wired yet**, so it is inert for mihi today. **2.3.20 → 2.3.22** (taken at 1.2.6) changes no symbol mihi calls: 2.3.20 feature-gated `[deps.bayan]` so it stops resolving transitively into consumers (this is what orphaned `lib/bayan-json.cyr` here); 2.3.21 is ai-hwaccel's own 6.6.0 bump plus four portability fixes, of which only "detector threads no longer log through single-threaded `sakshi`" touches a path mihi could reach — and mihi calls the *non*-threaded `registry_detect_no_exec()`; 2.3.22 fixed `load_models` returning 1 of 26 models, which has no caller in the detection path at all.
+- **ai-hwaccel 2.4.2** (git dep) — accelerator detection. 2.2.5 was the first release with the no-exec contract (`registry_detect_no_exec()` masks off the subprocess-shelling backends); without it mihi couldn't honor the "probes are pure reads" rule. At 2.4.2 `backend_uses_exec` (`src/types.cyr`) returns 1 for **six of 18** backends: CUDA, Gaudi, Neuron, Intel oneAPI, Cerebras, Graphcore. Windows (2.3.25), Apple (2.3.27) and Vulkan (2.3.29) became native. Vulkan's no-exec path is a `/sys/class/drm` scan that reports NVIDIA and Intel cards and leaves `amdgpu` to ROCm, so it adds no duplicate on AMD hosts. `BACKEND_AGNOS_GPU` is reserved with **no detector dispatch wired yet**, so it is inert for mihi. Of the 2.3.x symbol de-collisions only `hw_registry_new` reaches mihi, in the test suite's synthetic registries. 2.4.2's bundle opens with its own compile-verified `# Requires` block (12 leaves). Pin history: 2.2.5 (0.4.0) → 2.2.6 (0.4.1) → 2.3.18 (1.2.2) → 2.3.19 (1.2.5, forced: it moves the bundle onto canonical `bayan_json_v_*` names) → 2.3.22 (1.2.6) → 2.4.2 (1.2.8, the release that pins cyrius 6.6.20).
+- **bayan 1.5.12** (git dep, `optional = true`, `[features] default = ["bayan"]`) — the thin `dist/bayan-json.cyr` module only, at the commit cyrius 6.6.20 folds and ai-hwaccel 2.4.2 pins. mihi calls nothing in it. It defines the unreachable `bayan_json_v_*` names `dist/ai-hwaccel.cyr` references, so 6.6.20's `distlib` does not credit them to the stdlib bayan monolith and publish `bayan` in mihi's sidecar. Optional, so consumers never resolve it (verified: no bayan pin or file in a consumer). Added at 1.2.8; the full reasoning is in [architecture 001](../architecture/001-bundle-and-dependency-shape.md).
 
 ## Consumers
 
@@ -400,6 +435,16 @@ Direct (declared in `cyrius.cyml`):
   model, core count, total/available memory, uptime,
   GPU/accelerators); chakshu owns per-frame deltas (CPU%, disk rate,
   network rate, per-pid stats). This integration closed mihi's M6 gate.
+
+**Repinning to 1.2.8** is three pins in one commit:
+`[deps.mihi] tag = "1.2.8"`, `[deps.ai-hwaccel] tag = "2.4.2"` and
+`cyrius = "6.6.20"`, the combination verified against a scratch consumer.
+Two things to check on the consumer side. mihi's sidecar is now `sys
+syscalls`, so a consumer that used a leaf it only received through mihi's
+old 20-leaf sidecar must declare it. And `mihi_gpu_type` can return
+`ACCEL_VULKAN`, `ACCEL_METAL` or `ACCEL_APPLE_NPU` on Linux.
+
+Both consumers still pin 1.2.1, so they also cross the 1.2.6 break:
 
 **Repinning to 1.2.6 requires a source edit, not just a tag bump.**
 cyrius 6.6.0's value-form `Result` changes `mihi_uname`'s arity, so
@@ -444,8 +489,8 @@ Planned for post-v1.0:
 changes have to respect the contract or wait for v2.0. No internal
 work planned; the loop becomes (a) responding to consumer-side
 issues that surface in iam / chakshu / future consumers, (b) tracking
-upstream ai-hwaccel for dep bumps (current pin: 2.3.22) and cyrius for
-toolchain pins (current: 6.6.0), (c) absorbing additions that fit the
+upstream ai-hwaccel for dep bumps (current pin: 2.4.2) and cyrius for
+toolchain pins (current: 6.6.20), (c) absorbing additions that fit the
 "tell me about this box" surface without breaking signatures
 (additive-only).
 
@@ -461,6 +506,17 @@ ships no detector for it — when upstream wires one, mihi's gpu probes
 gain accelerator identity on the sovereign target for free (they
 already run the no-exec mask that includes it). Worth a smoke pass on
 agnos at that point; nothing to do until then.
+
+Open follow-up from 1.2.8: **the optional bayan-json dep is a distlib
+workaround.** It exists only because cyrius 6.6.20's sidecar verify
+records a leaf for a name that only a named dep's module leaves undefined.
+Reading the 6.7.18 source, the same classification is still there: the
+6.7.12 and 6.7.13 fixes cover a named dep's own sidecar leaves and kept
+folds, not names it deliberately leaves to its consumer. No cyrius issue
+is filed for this yet. When a fixed cyrius is pinned, drop `[deps.bayan]`
+and `[features]` and confirm the sidecar stays `sys syscalls`. The
+`include "lib/sys.cyr"` seed stays either way, because it states a real
+dependency.
 
 Anything outside the v1.0 contract — Windows / macOS, network probes,
 monitoring concerns — stays out of scope per `roadmap.md`. If a new

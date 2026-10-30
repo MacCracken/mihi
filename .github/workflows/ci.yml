@@ -50,8 +50,8 @@ jobs:
 
       - name: Verify lockfile
         # Unlike the stdlib-only siblings, mihi has a real `cyrius.lock`
-        # (109 entries: the vendored stdlib snapshot plus the
-        # commit-pinned ai-hwaccel dep), and `lib/` is COMMITTED here
+        # (the vendored stdlib snapshot plus the commit-pinned
+        # ai-hwaccel and bayan git deps), and `lib/` is COMMITTED here
         # rather than gitignored. So `--verify` is a genuine gate: it
         # hashes what's checked in against what the lock says, catching
         # a hand-edited vendored file (CLAUDE.md forbids those) or a
@@ -59,7 +59,7 @@ jobs:
         #
         # For the same reason there is deliberately NO `cyrius lib sync`
         # step here. Siblings that gitignore `lib/` need one; running it
-        # in mihi's CI would overwrite 109 tracked files and mask
+        # in mihi's CI would overwrite the tracked `lib/` and mask
         # exactly the drift this step exists to surface.
         run: cyrius deps --verify
 
