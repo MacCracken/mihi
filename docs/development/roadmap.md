@@ -30,50 +30,26 @@ current pins. This release runs them.
 - **Accelerator hosts.** ai-hwaccel 2.5.5's `/sys/class/accel` driver
   routing (the phantom-TPU fix), the Intel NPU path and the Vulkan sysfs
   scan have been read from source but never seen on hardware. Wanted: a
-  Core Ultra or Ryzen AI host, plus an NVIDIA or Intel GPU host. Also a
-  hybrid-graphics laptop, to measure whether `mihi_gpu_count()` wakes a
-  runtime-suspended dGPU (audit U-1: `power/runtime_status` before and
-  after).
+  Core Ultra or Ryzen AI host, plus an NVIDIA or Intel GPU host. Also an
+  AMD hybrid laptop with the dGPU in D3cold, to reproduce audit U-1 with
+  the issue's steps (`power_state` / `power/runtime_status` before and
+  after `mihi_gpu_count()`).
 - **Consumers.** `iam` and `chakshu` both pin mihi 1.2.1. Build each one
   against mihi HEAD in a scratch copy, confirm the 1.2.6 `mihi_uname`
   bind and the 1.2.8 sidecar change are the only edits they need, and
   leave a note in each repo. Do not edit them from here.
 - **Acceptance**: each run recorded in `state.md` with date, host and pins.
 
-## 1.5.x — Documentation and consumer guidance
-
-- **`docs/examples/` is empty.** Add runnable examples: the smallest
-  consumer (kernel / CPU / memory), and a GPU listing.
-- **Guides.** Write a toolchain-bump guide (the pin-move recipe now lives
-  only in `state.md`), and a consumer-integration guide. The integration
-  guide should cover:
-  - include order and repin rules;
-  - the expected `bayan_json_v_*` warnings;
-  - null handling (`mihi_cpu_model` on ACPI arm64, `mihi_gpu_name`);
-  - sanitizing before rendering (mihi returns raw bytes, and a hostname,
-    PRETTY_NAME or CPUID brand can carry control characters, audit L-3);
-  - the LXCFS hang (U-3).
-- Refresh `README.md` and `docs/guides/getting-started.md` against the
-  current pins and the published sidecar.
-
 ## 1.6.x — Upstream follow-through
 
-- **The bayan-json workaround.** File the cyrius issue: distlib's sidecar
-  verify credits a name that only a named dep's module leaves undefined
-  to the bundle being published. That is still true on 6.7.18. Once a
-  fixed cyrius is pinned, drop `[deps.bayan]` and `[features]` and confirm
-  the sidecar stays `sys syscalls`.
 - **The sakshi log-level clamp** in `_mihi_gpu_ensure()`. Since ai-hwaccel
   2.5.5 keeps its own WARN threshold, the clamp changes nothing by
   default. It still caps a consumer that raised ai-hwaccel's level for
   mihi's one detect call. Decide whether to keep it; the 1.2.2 tests pin
   the save / restore.
-- **ai-hwaccel's no-exec PCIe pass wakes suspended devices** (audit U-1).
-  `enrich_pcie` reads `max_link_{width,speed}`, which the kernel serves
-  through `pci_config_pm_runtime_get()`. File the issue upstream, asking
-  for a no-wake path: skip a device whose `power/runtime_status` is
-  `suspended`; reading that attribute does not resume the device. Take
-  the fix when it ships.
+- **ai-hwaccel's no-exec PCIe pass powers a D3cold GPU back on** (audit
+  U-1). Filed as ai-hwaccel `docs/development/issues/2026-10-30-no-exec-pcie-pass-resumes-powered-off-gpu.md`. Take the fix when it ships, and confirm
+  it on a hybrid laptop (1.4.x).
 - **gpu.cyr on AGNOS.** `programs/smoke.cyr` faults on AGNOS before its
   first line because it links the ai-hwaccel bundle (thread / atomic,
   Linux `CLONE_VM`). Re-measure with ai-hwaccel 2.5.5. If it still
@@ -113,7 +89,7 @@ current pins. This release runs them.
   run an AGNOS smoke pass then. *Gate: upstream ai-hwaccel.*
 - **Locking for the gpu singleton** (finding A-6). This is ADR 0002's
   alternative 3. *Gate: a multi-threaded consumer.*
-- **The read path's last race** (audit U-3). A device node swapped in
+- **The read path's last race** (audit U-2). A device node swapped in
   between `stat` and `open` is still opened. Closing that means an
   `O_PATH` open plus a re-open through `/proc/self/fd`, which breaks the
   distro probe where `/proc` is not mounted. *Gate: a consumer that needs

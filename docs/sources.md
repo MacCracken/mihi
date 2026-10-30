@@ -101,7 +101,7 @@ table:
   symlink could land on: a tty (which would otherwise become a session
   leader's controlling terminal), a device node, a FIFO, a directory.
   The residual is a device node swapped in between the stat and the
-  open (audit U-3).
+  open (audit U-2).
 - **Numbers**: one digit reader (`_mihi_parse_uint`) for every parser,
   capped at 18 digits. A 19th digit is malformed input and an error;
   through 1.3.1 the first 18 digits were returned as the value (audit
@@ -134,7 +134,7 @@ brackets.
   ACPI-booted arm64 there is no device tree at all (D-1 residual).
 - **Uptime** is the caller's time-namespace view [L-9].
 - **Containers**: under LXCFS these `/proc` and `/sys` files are served by
-  a FUSE daemon, and a hung daemon hangs the read (audit U-3).
+  a FUSE daemon, and a hung daemon hangs the read (audit U-2).
 
 ## Slice E — accelerator-identity probes (M3, v0.4.0)
 

@@ -21,7 +21,7 @@ Two shared scanners replace seven hand-rolled loops. `MIHI_IO_BLOCK`
 halves `mihi_cpu_model` (92 → 44 µs). A real fuzz harness, strict lint
 and a fuzz CI step were added. Tests went 143 → 214. One upstream side
 effect is recorded but not fixed: ai-hwaccel's no-exec PCIe pass can
-wake a runtime-suspended GPU (U-1).
+power a D3cold GPU back on (U-1), filed upstream.
 
 **1.3.1** — released 2026-10-29. Latest of everything: cyrius **6.7.9
 → 6.7.18**, ai-hwaccel **2.4.2 → 2.5.5**, bayan **1.5.14 → 1.11.1**. No
@@ -580,29 +580,17 @@ gain accelerator identity on the sovereign target for free (they
 already run the no-exec mask that includes it). Worth a smoke pass on
 agnos at that point; nothing to do until then.
 
-Open follow-up from 1.2.8: **the optional bayan-json dep is a distlib
-workaround.** It exists only because cyrius's sidecar verify records a
-leaf for a name that only a named dep's module leaves undefined. That was
-measured on 6.6.20, on 6.7.9 at the 1.3.0 cut and on 6.7.18 at 1.3.1:
-without the dep the sidecar is `sys bayan syscalls`. Reading the 6.7.18 source, the same
-classification is still there: the
-6.7.12 and 6.7.13 fixes cover a named dep's own sidecar leaves and kept
-folds, not names it deliberately leaves to its consumer. No cyrius issue
-is filed for this yet. When a fixed cyrius is pinned, drop `[deps.bayan]`
-and `[features]` and confirm the sidecar stays `sys syscalls`. The
-`include "lib/sys.cyr"` seed stays either way, because it states a real
-dependency.
-
 Closed at 1.3.1: **the phantom TPU** (opened at 1.3.0). ai-hwaccel 2.5.5
 classifies `/sys/class/accel` nodes by driver and PCI vendor. Still
 worth a smoke run on a Core Ultra or other `/sys/class/accel` host; none
 was available, so the fix is read from source, not measured here.
 
-Open from the 1.3.2 audit — **ai-hwaccel's no-exec PCIe pass can wake a
-suspended GPU** (U-1). `enrich_pcie` reads `max_link_{width,speed}`,
-which the kernel serves through `pci_config_pm_runtime_get()`, so
-`mihi_gpu_count()` can resume a hybrid laptop's dGPU from D3cold. To
-file upstream (roadmap 1.6.x).
+Open from the 1.3.2 audit — **ai-hwaccel's no-exec PCIe pass powers a
+D3cold GPU back on** (U-1). `enrich_pcie` reads `max_link_width`, which
+the kernel serves through `pci_config_pm_runtime_get()`: it resumes a
+suspended parent bridge, and the device when it is in D3cold. So on an AMD
+hybrid laptop, `mihi_gpu_count()` powers an idle dGPU back up. Filed
+upstream as ai-hwaccel `docs/development/issues/2026-10-30-no-exec-pcie-pass-resumes-powered-off-gpu.md`.
 
 Open follow-up from 1.3.1: **the log-level clamp in `_mihi_gpu_ensure()`.**
 Since ai-hwaccel 2.5.5 keeps its own WARN threshold, the clamp changes

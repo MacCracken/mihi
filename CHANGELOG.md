@@ -25,7 +25,7 @@ Same pins: cyrius 6.7.18, ai-hwaccel 2.5.5, bayan 1.11.1.
 
   The path is now `stat`'d before the open and `fstat`'d after it. Cost:
   +1.0 to +2.6 µs per file probe. The race between stat and open is the
-  residual (audit U-3).
+  residual (audit U-2).
 - **AGNOS uname slots are sealed** (B-10). Per `agnos-userland-abi.md` §4.3 a
   full 16-byte slot carries no NUL, so `mihi_cpu_arch` would have read past
   the 64-byte buffer. A slot with no NUL now reads as an empty field. Latent:
@@ -114,13 +114,15 @@ Same pins: cyrius 6.7.18, ai-hwaccel 2.5.5, bayan 1.11.1.
 
 ### Known — upstream and residual
 
-- **ai-hwaccel's no-exec PCIe pass can wake a runtime-suspended GPU** (U-1).
-  It reads `max_link_{width,speed}`, which kernel 7.3 serves through
-  `pci_config_pm_runtime_get()`. So `mihi_gpu_count()` on a hybrid-graphics
-  laptop can resume a dGPU from D3cold: a power and latency side effect, not
-  a spawn. To be filed upstream (roadmap 1.6.x).
+- **ai-hwaccel's no-exec PCIe pass powers a D3cold GPU back on** (U-1). It
+  reads `max_link_width`, which the kernel serves through
+  `pci_config_pm_runtime_get()`. That resumes a suspended parent bridge, and
+  the device when it is in D3cold. So on an AMD hybrid laptop with the dGPU
+  powered off, `mihi_gpu_count()` powers it back up: a power and latency side
+  effect, not a spawn. A D3hot device under an active port is not woken
+  (measured). Filed upstream as ai-hwaccel `docs/development/issues/2026-10-30-no-exec-pcie-pass-resumes-powered-off-gpu.md`.
 - **LXCFS:** in containers, a hung FUSE daemon behind `/proc` hangs the read
-  (U-3).
+  (U-2).
 
 ### Verified
 
