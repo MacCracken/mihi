@@ -4,6 +4,151 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.3.2] — 2026-10-29 — P(-1) audit and hardening sweep
+
+The third full audit:
+[`docs/audit/2026-10-29-audit.md`](docs/audit/2026-10-29-audit.md). Fourteen
+code fixes (B-1 … B-14), eight documentation and tooling corrections (E-1 …
+E-8), shared scanners, a real fuzz harness, three new CI gates, and 143 → 214
+assertions. No signature changed. Several probes now return their error value
+for malformed input where 1.3.1 returned a plausible wrong one (*Changed*).
+Same pins: cyrius 6.7.18, ai-hwaccel 2.5.5, bayan 1.11.1.
+
+### Security
+
+- **The read path takes regular files only, and opens with `O_NOCTTY`** (B-11).
+  Every source mihi reads is a regular file. Through 1.3.1 a repointed
+  `/etc/os-release` symlink could land the open on:
+  - a tty, which then became a session leader's controlling terminal
+    (reproduced) and whose input a read would consume;
+  - a device node whose driver acts on open.
+
+  The path is now `stat`'d before the open and `fstat`'d after it. Cost:
+  +1.0 to +2.6 µs per file probe. The race between stat and open is the
+  residual (audit U-3).
+- **AGNOS uname slots are sealed** (B-10). Per `agnos-userland-abi.md` §4.3 a
+  full 16-byte slot carries no NUL, so `mihi_cpu_arch` would have read past
+  the 64-byte buffer. A slot with no NUL now reads as an empty field. Latent:
+  today's longest AGNOS value is 7 characters.
+- **Negative start offsets no longer read before the buffer** in
+  `mihi_parse_meminfo_kb`, `mihi_parse_osrelease_value` and the digit reader
+  (B-12).
+
+### Fixed
+
+- **A truncation read that failed counted as end of file** (B-1). A `-EINTR` or
+  `-EIO` on the one-byte "is there more?" read let a cut file through as a
+  value. `-EINTR` is now retried within the budget, and any other error is a
+  failure.
+- **Numbers past 18 digits were returned truncated** (B-2), in uptime, meminfo
+  and CPU ranges. Example: `MemTotal: 0000000000000008000000 kB` read as
+  819,200 bytes. They are now errors.
+- **os-release:**
+  - a quoted value ran on across lines (B-5): `PRETTY_NAME="Foo` + newline +
+    `NAME="Bar"` gave `Foo\nNAME=`;
+  - a bare value on an unterminated last line was null (B-6);
+  - an empty or open-quoted PRETTY_NAME skipped the ID fallback (B-7).
+- **The AGNOS CPUID path read the brand leaves without checking they exist**
+  (B-8). Where the CPU or hypervisor caps extended leaves below 0x80000004,
+  that returned 48 bytes of unrelated register data. It now checks
+  `CPUID.80000000H`, as Linux's `get_model_name` does.
+- **`mihi_cpu_model` returned `""` for an empty value** (B-4); it now returns
+  null.
+- **AGNOS `mihi_distro` returned a string literal**, not a pointer into `buf`
+  as documented (B-13). It now copies into `buf`.
+- **`cpu.cyr` no longer defines `CYRIUS_ARCH_X86` for every AGNOS build**
+  (B-14). It was redundant on 6.7.18, it leaked into consumer code, and it
+  would have been wrong on a future aarch64 AGNOS.
+
+### Changed
+
+- **Malformed input returns the error value.**
+  - `mihi_parse_cpu_range`: any byte outside the kernel's `%*pbl` alphabet, a
+    dash with no end, or an overlong number gives 0, where 1.3.1 returned a
+    partial count (B-3). `"0-3,x"` was 4.
+  - `mihi_parse_uptime_secs` / `mihi_parse_meminfo_kb`: a 19th digit gives -1
+    (B-2). The 0.6.0 regression tests that asserted the truncated values now
+    assert the error.
+- **`mihi_distro` needs the file to fit in `cap - 1`** (one byte is kept for
+  B-6's terminating newline). The recommended `cap` (1024) is unchanged.
+- **AGNOS:**
+  - `mihi_cpu_count` returns -1 for a reported count of 0, where it used to
+    invent 1, and -1 past `MIHI_CPU_MAX` (B-9);
+  - `mihi_mem_total`, `mihi_mem_free` and `mihi_uptime_secs` return -1 for a
+    value past i64 max.
+- **`mihi_cpu_model` reads `MIHI_IO_BLOCK`**, a new read mode that stops at the
+  end of CPU 0's `/proc/cpuinfo` record: **92 → 44 µs** on the dev host.
+- **Refactor:** `io.cyr` holds two shared scanners. `_mihi_find_line_prefix`
+  replaces three copies of the line search, and `_mihi_parse_uint` replaces
+  four digit loops. The public names stay as wrappers (API frozen). The
+  meminfo parser is 42% faster and the cpuinfo parser 32%. ADR 0003 has an
+  amendment.
+- **Docs:**
+  - stale AGNOS "boot-info" comments corrected (E-2);
+  - the FIFO comment corrected (E-1);
+  - `mihi_cpu_count`'s 0 return documented (E-5);
+  - `docs/sources.md` gains the read-path rules and a *Limits a consumer
+    should know* section: raw bytes, os-release duplicates / CRLF /
+    `/usr/lib`, `cpu@0`, LXCFS;
+  - errata annotated in the 2026-05-19 audit (CVE-2025-40289's fix is 6.18,
+    not 6.15; CVE-2012-0957) and in the 2026-08-23 audit (FIFO semantics).
+- **Roadmap** rewritten: open work only, by release (1.4.x – 1.7.x, gated,
+  v2.0, out of scope), with the gaps this audit found.
+
+### Added
+
+- **`tests/mihi.fcyr`**, a deterministic mutation fuzzer, replacing the empty
+  stub. It covers every pure parser and checks result ranges, returned-pointer
+  bounds, and canary bands that catch out-of-bounds writes: 180,000 checks per
+  run. It was mutation-checked by planting an out-of-bounds write and
+  disabling the seal; both were caught.
+- **CI:**
+  - a Fuzz step (plain, `--bounds`, `--poison`);
+  - `cyrius lint --strict`, failing on untracked deferrals;
+  - `tests/*.fcyr` in the fmt sweep;
+  - the fuzz harness and architecture 001 among the required files.
+- **Slice G** of the suite: one group per code finding, each naming the 1.3.1
+  result. 71 new assertions.
+- **`scripts/bench-history.sh`** marks rows from a tree with uncommitted
+  changes `-dirty` (E-7).
+
+### Known — upstream and residual
+
+- **ai-hwaccel's no-exec PCIe pass can wake a runtime-suspended GPU** (U-1).
+  It reads `max_link_{width,speed}`, which kernel 7.3 serves through
+  `pci_config_pm_runtime_get()`. So `mihi_gpu_count()` on a hybrid-graphics
+  laptop can resume a dGPU from D3cold: a power and latency side effect, not
+  a spawn. To be filed upstream (roadmap 1.6.x).
+- **LXCFS:** in containers, a hung FUSE daemon behind `/proc` hangs the read
+  (U-3).
+
+### Verified
+
+- `cyrius test`: **214 / 214**; fuzz green in all three modes.
+- Every `ci.yml` step replayed locally:
+  - `deps --verify` 115 / 115;
+  - fmt and strict lint clean;
+  - `distlib` deterministic, sidecar `sys syscalls`;
+  - `--agnos` / `--aarch64` compile with 0 warnings;
+  - benches; DCE parity; security scan.
+- **Mutation check:** each fix was undone in a scratch copy, and the suite went
+  red for all but B-8's integration, which cannot fail on a CPU that has the
+  brand leaves.
+- **No-exec stand-in check:** no vendor tool run from smoke or the suite.
+- **Scratch consumer:** one commit pin, 449,408 B.
+
+| | 1.3.1 | 1.3.2 |
+|---|---:|---:|
+| `probe/mihi_cpu_model` | 92.2 µs | 44.1 µs |
+| `probe/mihi_uname` | 1,035 ns | 969 ns |
+| `probe/mihi_cpu_count` | 6.1 µs | 8.7 µs |
+| `probe/mihi_distro` | 4.3 µs | 5.6 µs |
+| `build/mihi-smoke` | 593,520 B | 597,680 B |
+
+Not verified: no AGNOS boot (B-8, B-9, B-10 and B-13 are compile-only), no
+arm64 hardware run, no `/sys/class/accel` or suspended-dGPU host. All three
+are roadmap 1.4.x.
+
 ## [1.3.1] — 2026-10-29 — cyrius 6.7.18, ai-hwaccel 2.5.5, and no phantom TPU
 
 **Toolchain `6.7.9 → 6.7.18`, ai-hwaccel `2.4.2 → 2.5.5`, bayan `1.5.14 →

@@ -6,9 +6,14 @@
 # (offset 130). lib/sys.cyr provides the raw uname syscall; we
 # layer field-accessors named after the mihi probe surface on top.
 #
-# AGNOS-native: kernel name + version come from the boot-info struct
-# at handoff, not from a faked utsname. That path lands when AGNOS has
-# a stable boot-info ABI; today's bodies are Linux-only.
+# AGNOS: the same probes read AGNOS's own uname syscall (#34), whose
+# 64-byte struct is four fixed 16-byte slots (agnos-userland-abi.md
+# §4.3); lib/sys.cyr carries the per-target offsets. That is a native
+# path, not a faked Linux one, and it has shipped since 1.1.2 / 1.1.3.
+# Through 1.3.1 this comment still said the AGNOS path would "land when
+# AGNOS has a stable boot-info ABI" and that the bodies were Linux-only
+# (audit E-2). Whether the boot-info struct should replace the syscall
+# is an open roadmap decision (1.7.x).
 #
 # Buffer contract (see docs/adr/0001-shared-uts-buffer.md):
 #   Caller allocates uts[UTS_SIZE] on its stack, calls mihi_uname(uts)
@@ -16,6 +21,55 @@
 
 # uname(2) / sysinfo(2) wrappers and their per-target UTS_* / SI_* offsets.
 include "lib/sys.cyr"
+
+# MIHI_UTS_FIELD — the width of one utsname slot. Linux: 65
+# (__NEW_UTS_LEN 64 + NUL; six slots, 390 bytes). AGNOS: 16, four slots,
+# 64 bytes, and per agnos-userland-abi.md §4.3 "NUL-padded to fill the
+# slot (not NUL-terminated-and-variable)". So a 16-character AGNOS value
+# carries no terminator.
+#ifdef CYRIUS_TARGET_AGNOS
+enum MihiUtsLayout { MIHI_UTS_FIELD = 16; }
+#endif
+#ifndef CYRIUS_TARGET_AGNOS
+enum MihiUtsLayout { MIHI_UTS_FIELD = 65; }
+#endif
+
+# Zero every `width`-byte slot of the `size`-byte utsname at `uts` that
+# holds no NUL, so each field accessor's cstring ends inside its own slot.
+# Returns how many slots it zeroed. Pure.
+#
+# Audit B-10 (2026-10-29): the accessors return `uts + UTS_X` as a
+# cstring and so need a NUL inside the slot. Linux guarantees one. AGNOS
+# does not: a 16-character value fills its slot exactly. Then
+# mihi_kernel_version runs on into the machine slot, and mihi_cpu_arch
+# (the last slot) runs past the 64-byte buffer the ADR 0001 contract
+# has the caller allocate. Today's longest AGNOS value is 7 characters,
+# so nothing trips this yet. A full slot is reported as an empty field,
+# the same honest "unknown" A-4 gives a failed call, rather than cut to
+# 15 characters, which would be a plausible wrong value.
+fn _mihi_uts_seal(uts, size, width): i64 {
+    if (width <= 0) { return 0; }
+    var zeroed = 0;
+    var base = 0;
+    while (base + width <= size) {
+        var k = 0;
+        var nul = 0;
+        while (k < width && nul == 0) {
+            if (load8(uts + base + k) == 0) { nul = 1; }
+            k = k + 1;
+        }
+        if (nul == 0) {
+            k = 0;
+            while (k < width) {
+                store8(uts + base + k, 0);
+                k = k + 1;
+            }
+            zeroed = zeroed + 1;
+        }
+        base = base + width;
+    }
+    return zeroed;
+}
 
 # Fill `uts` (must point to at least UTS_SIZE bytes — 390 on Linux,
 # 64 on AGNOS) with the current kernel's utsname struct. Returns
@@ -65,6 +119,12 @@ fn mihi_uname(uts): i64 {
     # machine@48 in the sovereign 64-byte struct; Linux: the 390-byte layout.
     var rc = sys_uname(uts);
     if (rc != 0) { return Err(rc); }
+    # AGNOS only: Linux guarantees the NUL (uname(2); sethostname(2) refuses
+    # more than 64 bytes and zero-fills the slot), and sealing six slots
+    # there cost ~320 ns a call for nothing.
+    #ifdef CYRIUS_TARGET_AGNOS
+    _mihi_uts_seal(uts, UTS_SIZE, MIHI_UTS_FIELD);
+    #endif
     return Ok(uts);
 }
 

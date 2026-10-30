@@ -122,7 +122,7 @@ include "lib/mihi.cyr"   // after `cyrius deps` resolves the [deps.mihi] entry
 - [`docs/guides/`](docs/guides/) — Task-oriented how-tos
 - [`docs/examples/`](docs/examples/) — Runnable examples
 - [`docs/development/state.md`](docs/development/state.md) — Live state snapshot
-- [`docs/development/roadmap.md`](docs/development/roadmap.md) — Milestones through v1.0
+- [`docs/development/roadmap.md`](docs/development/roadmap.md) — Open work, grouped by release (1.x line, gated items, v2.0 parking, out of scope)
 - [`docs/sources.md`](docs/sources.md) — Per-probe `/proc`/`/sys`/syscall citation index (required before v1.0)
 
 Full doc-tree convention: [first-party-documentation.md](https://github.com/MacCracken/agnosticos/blob/main/docs/development/planning/first-party-documentation.md).

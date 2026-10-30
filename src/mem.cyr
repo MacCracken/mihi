@@ -31,25 +31,9 @@ enum MihiMemLimit {
 # Returns the offset just past the field's colon (where the value
 # whitespace begins), or 0 - 1 if not found.
 # Pure function — exposed for unit tests against synthetic buffers.
+# Since 1.3.2 this is the shared line-anchored scan in io.cyr.
 fn mihi_find_meminfo_field(buf, len, field, field_len): i64 {
-    var i = 0;
-    var found = 0 - 1;
-    while (i + field_len <= len && found == 0 - 1) {
-        var anchored = 0;
-        if (i == 0) { anchored = 1; }
-        if (i > 0 && load8(buf + i - 1) == 10) { anchored = 1; }
-        if (anchored == 1) {
-            var matched = 1;
-            var j = 0;
-            while (j < field_len && matched == 1) {
-                if (load8(buf + i + j) != load8(field + j)) { matched = 0; }
-                j = j + 1;
-            }
-            if (matched == 1) { found = i + field_len; }
-        }
-        i = i + 1;
-    }
-    return found;
+    return _mihi_find_line_prefix(buf, len, field, field_len);
 }
 
 # Parse a meminfo value: skip whitespace (tab/space), accumulate
@@ -60,22 +44,24 @@ fn mihi_find_meminfo_field(buf, len, field, field_len): i64 {
 # digits — i64 max is 19 digits, so 18 leaves headroom against the
 # multiply-by-10 overflow. Real /proc/meminfo never emits more than
 # ~10 digits per field (16 EiB is the practical ceiling).
+#
+# Defensive (2026-10-29 audit B-2): a 19th digit is an error, not a
+# value. Through 1.3.1 the cap stopped the loop and returned the first
+# 18 digits, and the M-1 regression test asserted exactly that. The
+# number goes through io.cyr's _mihi_parse_uint, which rejects it.
+#
+# A negative `start` (what mihi_find_meminfo_field returns for a missing
+# field) is -1. Through 1.3.1 it read the byte before `buf` (audit B-12).
 fn mihi_parse_meminfo_kb(buf, len, start): i64 {
+    if (start < 0) { return 0 - 1; }
     var p = start;
     while (p < len && (load8(buf + p) == 9 || load8(buf + p) == 32)) {
         p = p + 1;
     }
     if (p >= len) { return 0 - 1; }
-    var v = 0;
-    var has = 0;
-    var d = 0;
-    while (p < len && load8(buf + p) >= 48 && load8(buf + p) <= 57 && d < 18) {
-        v = v * 10 + (load8(buf + p) - 48);
-        has = 1;
-        d = d + 1;
-        p = p + 1;
-    }
-    if (has == 0) { return 0 - 1; }
+    var e[8];
+    var v = _mihi_parse_uint(buf, len, p, &e);
+    if (v < 0) { return 0 - 1; }
     return v;
 }
 
@@ -113,7 +99,11 @@ fn mihi_mem_total(buf, cap): i64 {
     # sys_sysinfo; SI_TOTALRAM is reported in bytes directly).
     var si[120];
     if (sys_sysinfo(&si) != 0) { return 0 - 1; }
-    return sysinfo_total_memory(&si);
+    # A u64 past i64 max loads negative; any negative other than the
+    # documented -1 breaks the contract, so report it as the error (B-9).
+    var t = sysinfo_total_memory(&si);
+    if (t < 0) { return 0 - 1; }
+    return t;
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
     var n = _mihi_read_probe_file("/proc/meminfo", buf, cap, MIHI_IO_WHOLE);
@@ -145,7 +135,9 @@ fn mihi_mem_free(buf, cap): i64 {
     # different questions. Separate code path, not a fallback chain.
     var si[120];
     if (sys_sysinfo(&si) != 0) { return 0 - 1; }
-    return sysinfo_free_memory(&si);
+    var f = sysinfo_free_memory(&si);
+    if (f < 0) { return 0 - 1; }   # as mihi_mem_total (B-9)
+    return f;
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
     var n = _mihi_read_probe_file("/proc/meminfo", buf, cap, MIHI_IO_WHOLE);

@@ -8,8 +8,8 @@
 # without a tool (CUDA, Intel oneAPI — backend_needs_exec()) and runs
 # every other detector with allow_exec 0, which skips each vendor-tool
 # run. So mihi's "probes are pure reads" rule is preserved end-to-end.
-# See docs/development/roadmap.md M3 + ai-hwaccel/src/registry.cyr for
-# the no-exec contract.
+# See docs/sources.md Slice E + ai-hwaccel/src/registry.cyr for the
+# no-exec contract.
 #
 # Sources of truth (all sysfs/syscall — no subprocess):
 #   - ROCm:       /sys/class/drm/card*/device/mem_info_vram_total
@@ -51,7 +51,7 @@
 # profile that registry_detect_no_exec() always synthesizes is hidden.
 # idx 0 is the first real accelerator; idx >= count returns 0 / 0-1.
 
-# Module-level cache. 0 = not yet initialized; a non-zero pointer once
+# Module-level cache. 0 = uninitialized; a non-zero pointer once
 # _mihi_gpu_ensure() has run registry_detect_no_exec() one time.
 # Never freed — the registry is process-lifetime data (matches the
 # boot-info-struct lifetime on AGNOS-native).

@@ -1,16 +1,274 @@
-# mihi fuzz harness
+# mihi fuzz harness — the pure parsers under mutated input (1.3.2).
+#
+# Replaces the empty stub that shipped through 1.3.1. Every parser mihi
+# runs over /proc, /sys or /etc content gets realistic seed inputs, and
+# each round mutates one (byte substitutions drawn from the characters
+# those parsers branch on, then a random cut) and checks invariants:
+#   - the result is inside the parser's documented range;
+#   - a returned cstring points inside the buffer and ends at a NUL
+#     before the buffer does;
+#   - nothing outside the buffer was written. The buffer sits between
+#     two canary bands, which are checked after every call.
+# Deterministic (fixed-seed xorshift64), so a failure reproduces. Exit
+# code: 0 on success, otherwise the number of the failed check (see
+# fz_fail calls). Run: `cyrius fuzz tests/mihi.fcyr`.
 
-fn fuzz_main(data, len) {
-    if (len == 0) { return 0; }
+include "src/types.cyr"
+include "src/io.cyr"
+include "src/cpu.cyr"
+include "src/mem.cyr"
+include "src/kernel.cyr"
+include "src/host.cyr"
+
+enum FuzzShape {
+    FZ_PAD = 32;       # canary band on each side
+    FZ_CAP = 256;      # the buffer a parser sees
+    FZ_TOTAL = 320;    # FZ_PAD + FZ_CAP + FZ_PAD
+    FZ_CANARY = 165;   # 0xA5
+    FZ_ROUNDS = 20000;
+}
+
+var fz_state = 88172645463325252;
+var fz_checks = 0;
+
+# xorshift64, kept non-negative.
+fn fz_next(): i64 {
+    var x = fz_state;
+    x = x ^ (x << 13);
+    x = x ^ (x >> 7);
+    x = x ^ (x << 17);
+    fz_state = x;
+    if (x < 0) { x = 0 - (x + 1); }
+    return x;
+}
+
+fn fz_below(n): i64 {
+    if (n <= 0) { return 0; }
+    return fz_next() % n;
+}
+
+fn fz_fail(code): i64 {
+    print("fuzz: FAIL check ", 17);
+    println_int(code);
+    print("fuzz: after checks ", 19);
+    println_int(fz_checks);
+    syscall(SYS_EXIT, code);
+    return 0;
+}
+
+# The bytes the parsers branch on, plus NUL and 0xFF.
+fn fz_interesting(): i64 {
+    var pick = fz_below(20);
+    if (pick == 0) { return 48 + fz_below(10); }   # a digit
+    if (pick == 1) { return 45; }                  # -
+    if (pick == 2) { return 44; }                  # ,
+    if (pick == 3) { return 10; }                  # \n
+    if (pick == 4) { return 32; }                  # space
+    if (pick == 5) { return 9; }                   # \t
+    if (pick == 6) { return 58; }                  # :
+    if (pick == 7) { return 34; }                  # "
+    if (pick == 8) { return 39; }                  # '
+    if (pick == 9) { return 61; }                  # =
+    if (pick == 10) { return 0; }                  # NUL
+    if (pick == 11) { return 255; }
+    if (pick == 12) { return 46; }                 # .
+    return fz_below(256);
+}
+
+# Fill the whole arena with the canary, copy `seed` (seed_len bytes) to
+# the buffer's start, mutate 1..4 bytes, and return the cut length
+# (0..seed_len). The parser sees `area + FZ_PAD`.
+fn fz_prepare(area, seed, seed_len): i64 {
+    var i = 0;
+    while (i < FZ_TOTAL) {
+        store8(area + i, FZ_CANARY);
+        i = i + 1;
+    }
+    var n = seed_len;
+    if (n > FZ_CAP) { n = FZ_CAP; }
+    i = 0;
+    while (i < n) {
+        store8(area + FZ_PAD + i, load8(seed + i));
+        i = i + 1;
+    }
+    var muts = 1 + fz_below(4);
+    var m = 0;
+    while (m < muts && n > 0) {
+        store8(area + FZ_PAD + fz_below(n), fz_interesting());
+        m = m + 1;
+    }
+    # Cut, and put the canary back past the cut, so everything outside
+    # what the parser is handed is canary.
+    var cut = fz_below(n + 1);
+    i = FZ_PAD + cut;
+    while (i < FZ_TOTAL) {
+        store8(area + i, FZ_CANARY);
+        i = i + 1;
+    }
+    return cut;
+}
+
+# The bytes outside [FZ_PAD, FZ_PAD + cap) must still be canary.
+fn fz_canaries(area, cap, code): i64 {
+    var i = 0;
+    while (i < FZ_PAD) {
+        if (load8(area + i) != FZ_CANARY) { fz_fail(code); }
+        i = i + 1;
+    }
+    i = FZ_PAD + cap;
+    while (i < FZ_TOTAL) {
+        if (load8(area + i) != FZ_CANARY) { fz_fail(code); }
+        i = i + 1;
+    }
+    fz_checks = fz_checks + 1;
+    return 0;
+}
+
+# A cstring result: 0, or a pointer into [buf, buf + lim) with a NUL
+# before buf + lim.
+fn fz_cstr_ok(r, buf, lim, code): i64 {
+    if (r == 0) { return 0; }
+    if (r < buf || r >= buf + lim) { fz_fail(code); }
+    var p = r;
+    var nul = 0;
+    while (p < buf + lim && nul == 0) {
+        if (load8(p) == 0) { nul = 1; }
+        p = p + 1;
+    }
+    if (nul == 0) { fz_fail(code + 1); }
+    return 0;
+}
+
+fn fz_cpu_range(area, seed, sl): i64 {
+    var n = fz_prepare(area, seed, sl);
+    var buf = area + FZ_PAD;
+    var v = mihi_parse_cpu_range(buf, n);
+    if (v < 0 || v > MIHI_CPU_MAX) { fz_fail(10); }
+    fz_canaries(area, n, 11);
+    return 0;
+}
+
+fn fz_meminfo(area, seed, sl): i64 {
+    var n = fz_prepare(area, seed, sl);
+    var buf = area + FZ_PAD;
+    var pos = mihi_find_meminfo_field(buf, n, "MemAvailable:", 13);
+    if (pos != 0 - 1 && (pos < 13 || pos > n)) { fz_fail(20); }
+    var kb = mihi_parse_meminfo_kb(buf, n, pos);
+    if (kb < 0 - 1) { fz_fail(21); }
+    var b = mihi_extract_meminfo_bytes(buf, n, "MemTotal:", 9);
+    if (b < 0 - 1) { fz_fail(22); }
+    if (b > MIHI_MEM_KB_MAX * 1024) { fz_fail(23); }
+    fz_canaries(area, n, 24);
+    return 0;
+}
+
+fn fz_uptime(area, seed, sl): i64 {
+    var n = fz_prepare(area, seed, sl);
+    var buf = area + FZ_PAD;
+    var v = mihi_parse_uptime_secs(buf, n);
+    if (v < 0 - 1) { fz_fail(30); }
+    if (v > 999999999999999999) { fz_fail(31); }
+    var e[8];
+    store64(&e, 0 - 7);
+    var u = _mihi_parse_uint(buf, n, fz_below(n + 2) - 1, &e);
+    if (u >= 0) {
+        if (load64(&e) < 0 || load64(&e) > n) { fz_fail(32); }
+    }
+    fz_canaries(area, n, 33);
+    return 0;
+}
+
+fn fz_cpu_model(area, seed, sl): i64 {
+    var n = fz_prepare(area, seed, sl);
+    var buf = area + FZ_PAD;
+    var r = mihi_parse_cpu_model(buf, n);
+    fz_cstr_ok(r, buf, n, 40);
+    fz_canaries(area, n, 42);
+    return 0;
+}
+
+fn fz_osrelease(area, seed, sl): i64 {
+    var n = fz_prepare(area, seed, sl);
+    var buf = area + FZ_PAD;
+    # _mihi_osrelease_pick may write one byte at buf + n (n < cap): give it
+    # the whole buffer as its capacity, and check against that.
+    var cap = n + fz_below(2);
+    if (cap > FZ_CAP) { cap = FZ_CAP; }
+    var r = _mihi_osrelease_pick(buf, n, cap);
+    fz_cstr_ok(r, buf, cap, 50);
+    fz_canaries(area, cap, 52);
+    return 0;
+}
+
+fn fz_dt(area, seed, sl): i64 {
+    var n = fz_prepare(area, seed, sl);
+    var buf = area + FZ_PAD;
+    var r = mihi_parse_dt_string(buf, n);
+    if (r != 0 && r != buf) { fz_fail(60); }
+    fz_cstr_ok(r, buf, n, 61);
+    fz_canaries(area, n, 63);
+    return 0;
+}
+
+fn fz_seal(area): i64 {
+    var i = 0;
+    while (i < FZ_TOTAL) {
+        store8(area + i, FZ_CANARY);
+        i = i + 1;
+    }
+    var buf = area + FZ_PAD;
+    i = 0;
+    while (i < 64) {
+        store8(buf + i, fz_interesting());
+        i = i + 1;
+    }
+    _mihi_uts_seal(buf, 64, 16);
+    # every 16-byte slot now holds a NUL
+    var s = 0;
+    while (s < 4) {
+        var k = 0;
+        var nul = 0;
+        while (k < 16) {
+            if (load8(buf + s * 16 + k) == 0) { nul = 1; }
+            k = k + 1;
+        }
+        if (nul == 0) { fz_fail(70); }
+        s = s + 1;
+    }
+    fz_canaries(area, 64, 71);
     return 0;
 }
 
 fn main() {
     alloc_init();
-    fuzz_main("test", 4);
-    println("fuzz: ok");
+    var area[320];   # FZ_TOTAL
+
+    var s_cpu1 = "0-15\n";
+    var s_cpu2 = "0-3,5,7-11,64-127\n";
+    var s_mem = "MemTotal:       61192260 kB\nMemFree:        1234 kB\nMemAvailable:   45123456 kB\n";
+    var s_up = "182328.47 2716345.11\n";
+    var s_ci = "processor\t: 0\nvendor_id\t: AuthenticAMD\nmodel name\t: AMD Ryzen 7 5800H with Radeon Graphics\nflags\t\t: fpu vme\n\nprocessor\t: 1\n";
+    var s_os = "NAME=\"Arch Linux\"\nPRETTY_NAME=\"Arch Linux\"\nID=arch\nBUILD_ID=rolling\n";
+    var s_os2 = "PRETTY_NAME='Some Linux'\nVERSION_ID=1\nID=some";
+    var s_dt = "arm,cortex-a72";   # its NUL is the 15th byte
+
+    var r = 0;
+    while (r < FZ_ROUNDS) {
+        fz_cpu_range(&area, s_cpu1, strlen(s_cpu1));
+        fz_cpu_range(&area, s_cpu2, strlen(s_cpu2));
+        fz_meminfo(&area, s_mem, strlen(s_mem));
+        fz_uptime(&area, s_up, strlen(s_up));
+        fz_cpu_model(&area, s_ci, strlen(s_ci));
+        fz_osrelease(&area, s_os, strlen(s_os));
+        fz_osrelease(&area, s_os2, strlen(s_os2));
+        fz_dt(&area, s_dt, 15);
+        fz_seal(&area);
+        r = r + 1;
+    }
+    print("fuzz: ok, ", 10);
+    println_int(fz_checks);
     return 0;
 }
 
-var r = main();
-syscall(60, r);
+var rc = main();
+syscall(SYS_EXIT, rc);

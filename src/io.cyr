@@ -27,15 +27,39 @@
 #     a thing someone can repoint. If it ever resolves to a FIFO, a
 #     blocking `open(2)` hangs the calling process — and mihi's first
 #     consumer runs on the *login* path, so a hang there is a login
-#     denial. With `O_NONBLOCK` the open returns immediately and the
-#     subsequent read fails `-EAGAIN`, which becomes an honest probe
-#     error. On regular, procfs, and sysfs files the flag is inert.
+#     denial. With `O_NONBLOCK` the open returns immediately. The read
+#     then returns 0 (EOF) when the FIFO has no writer, or `-EAGAIN`
+#     when a writer holds it open with nothing written; both become an
+#     honest probe error (measured, and pipe(7) / fifo(7)). Through
+#     1.3.1 this comment said `-EAGAIN` for both. On regular, procfs,
+#     and sysfs files the flag is inert.
 #     `O_NOFOLLOW` would be the blunter answer and is wrong here: it
 #     would reject the legitimate symlink the spec mandates.
 #   - **`O_CLOEXEC`** — the descriptor is closed a few instructions
 #     later, so the window is tiny, but a consumer that forks from
 #     another thread mid-probe would otherwise leak it into the child.
 #     Free hygiene.
+#
+# 1.3.2 adds a regular-file rule and `O_NOCTTY` (2026-10-29 audit,
+# finding B-11). Every file mihi reads is a regular file: procfs and
+# sysfs attributes report S_IFREG, and /etc/os-release is a symlink to
+# one. A repointed symlink is the case `O_NONBLOCK` above was answering,
+# and a FIFO is not the only thing it can land on:
+#   - **a terminal.** Opening a tty without `O_NOCTTY` makes it the
+#     controlling terminal of a session leader that has none. The
+#     independent review reproduced that with a pty (setsid, then the
+#     probe; afterwards `/dev/tty` opens). Reading it would also consume
+#     what the user types. Both are lasting changes to process state
+#     from a function whose contract is a pure read.
+#   - **any other device node.** Some drivers act on open(2) itself.
+# So the path is stat(2)'d first and opened only if it is a regular
+# file. The descriptor is fstat(2)'d again before any read, which closes
+# the race for what is *read*: a path swapped to a device between the
+# two checks is refused without a byte read. `O_NOCTTY` covers a tty in
+# that window. What stays open is the window itself, a driver's
+# open-time side effect for a node swapped in between stat and open.
+# Closing that needs an O_PATH open plus a re-open by descriptor, for a
+# path only root can repoint. Recorded in the audit as residual.
 #
 # Not used on AGNOS. Every probe takes a sysinfo(2) / CPUID / constant
 # path on the sovereign target (there is no procfs to read), so the body
@@ -61,6 +85,13 @@
 #                   null rather than a partial value when the buffer
 #                   ends mid-line. Do not reach for PREFIX to paper over
 #                   an undersized buffer.
+#   MIHI_IO_BLOCK   PREFIX, and stop reading as soon as the buffer holds
+#                   a blank line ("\n\n"), the end of the file's first
+#                   record. /proc/cpuinfo is one record per CPU, and the
+#                   kernel builds each record when it is read, so every
+#                   record past CPU 0's is work done for nothing. Added
+#                   at 1.3.2; it took mihi_cpu_model from ~92 µs to the
+#                   cost of one read on the 16-thread dev host.
 #
 #   MIHI_IO_FAIL    open failed, read failed, or the file was empty.
 #   MIHI_IO_TRUNC   WHOLE was asked for and the file did not fit in
@@ -71,11 +102,28 @@
 enum MihiIoMode {
     MIHI_IO_WHOLE = 0;
     MIHI_IO_PREFIX = 1;
+    MIHI_IO_BLOCK = 2;
 }
 enum MihiIoStatus {
     MIHI_IO_FAIL = 1;
     MIHI_IO_TRUNC = 2;
     MIHI_IO_EINTR_MAX = 8;
+}
+
+# MIHI_O_NOCTTY — 0400 (256) in include/uapi/asm-generic/fcntl.h, which
+# x86_64 and arm64 Linux both use. The vendored stdlib does not define
+# it. MIHI_S_IFMT / MIHI_S_IFREG — the file-type mask and the
+# regular-file type from inode(7).
+enum MihiIoFlag {
+    MIHI_O_NOCTTY = 256;
+    MIHI_S_IFMT = 61440;    # 0170000
+    MIHI_S_IFREG = 32768;   # 0100000
+}
+
+# 1 when a st_mode is a regular file. Pure.
+fn _mihi_is_regular(mode): i64 {
+    if ((mode & MIHI_S_IFMT) == MIHI_S_IFREG) { return 1; }
+    return 0;
 }
 
 # Read a small pseudo-file into `buf` (capacity `cap`).
@@ -89,7 +137,7 @@ enum MihiIoStatus {
 # the buffer exactly, one more single-byte read decides whether that was
 # EOF or a longer file. That costs one extra syscall only in the case
 # that would otherwise return a wrong answer, and it is skipped
-# entirely under MIHI_IO_PREFIX.
+# entirely under MIHI_IO_PREFIX and MIHI_IO_BLOCK.
 #
 # `-EINTR` is retried up to MIHI_IO_EINTR_MAX times, then reported as a
 # failure — bounded, so a pathological signal storm cannot spin here.
@@ -97,6 +145,14 @@ enum MihiIoStatus {
 # that is the O_NONBLOCK FIFO case above, and "would block" on a file
 # that is supposed to be a 400-byte text file is not a retry, it is a
 # wrong file.
+#
+# The one-byte truncation read obeys the same rules (2026-10-29 audit,
+# finding B-1). Through 1.3.1 its result was tested only for `> 0`, so
+# a `-EINTR` or `-EIO` there read as "nothing more" and a cut file came
+# back as a plausible value — the A-1 defect this module exists to
+# close, on its last syscall. It now shares the `-EINTR` budget, and any
+# other error is a failure: a read that cannot say whether the file
+# ended cannot vouch for the value.
 #
 # Still a pure read: open/read/close of a compile-time-constant path,
 # no mutation of anything on the system, no process spawned.
@@ -106,8 +162,22 @@ fn _mihi_read_probe_file(path, buf, cap, mode): i64 {
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
     if (cap <= 0) { return 0 - MIHI_IO_FAIL; }
-    var fd = sys_open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK, 0);
+    # Regular files only, checked on the path and again on the descriptor
+    # (B-11, header). 144 is STAT_BUFSZ on x86_64 and aarch64 Linux;
+    # STAT_MODE is the per-arch st_mode offset from lib/syscalls.
+    var st[144];
+    if (sys_stat(path, &st) != 0) { return 0 - MIHI_IO_FAIL; }
+    if (_mihi_is_regular(load32(&st + STAT_MODE)) == 0) { return 0 - MIHI_IO_FAIL; }
+    var fd = sys_open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK | MIHI_O_NOCTTY, 0);
     if (fd < 0) { return 0 - MIHI_IO_FAIL; }
+    if (sys_fstat(fd, &st) != 0) {
+        sys_close(fd);
+        return 0 - MIHI_IO_FAIL;
+    }
+    if (_mihi_is_regular(load32(&st + STAT_MODE)) == 0) {
+        sys_close(fd);
+        return 0 - MIHI_IO_FAIL;
+    }
     var total = 0;
     var eintr = 0;
     var failed = 0;
@@ -130,6 +200,11 @@ fn _mihi_read_probe_file(path, buf, cap, mode): i64 {
             done = 1;
             continue;
         }
+        # BLOCK: scan only the new bytes, plus the one before them, so a
+        # "\n\n" split across two reads is still seen.
+        if (mode == MIHI_IO_BLOCK && _mihi_has_blank_line(buf, total, total + n) == 1) {
+            done = 1;
+        }
         total = total + n;
         if (total >= cap) { done = 1; }
     }
@@ -140,10 +215,108 @@ fn _mihi_read_probe_file(path, buf, cap, mode): i64 {
     # Buffer full — was that EOF, or is there more file behind it?
     if (total >= cap && mode == MIHI_IO_WHOLE) {
         extra = sys_read(fd, &probe, 1);
+        while (extra == 0 - EINTR && eintr < MIHI_IO_EINTR_MAX) {
+            eintr = eintr + 1;
+            extra = sys_read(fd, &probe, 1);
+        }
     }
     sys_close(fd);
+    return _mihi_io_verdict(total, extra);
+    #endif
+}
+
+# The read's outcome from its byte count and the truncation read's
+# result (0 when that read was not made). Pure, so the error cases the
+# kernel will not produce on demand can be asserted directly.
+fn _mihi_io_verdict(total, extra): i64 {
     if (extra > 0) { return 0 - MIHI_IO_TRUNC; }
+    if (extra < 0) { return 0 - MIHI_IO_FAIL; }
     if (total <= 0) { return 0 - MIHI_IO_FAIL; }
     return total;
-    #endif
+}
+
+# 1 when buf[lo - 1 .. hi) holds "\n\n" (the scan starts one byte early
+# when lo > 0, so a pair split across two reads counts). Pure.
+fn _mihi_has_blank_line(buf, lo, hi): i64 {
+    var i = lo;
+    if (i > 0) { i = i - 1; }
+    var hit = 0;
+    while (i + 1 < hi && hit == 0) {
+        if (load8(buf + i) == 10 && load8(buf + i + 1) == 10) { hit = 1; }
+        i = i + 1;
+    }
+    return hit;
+}
+
+# ----- shared scanners (1.3.2) ---------------------------------------
+#
+# Every parser in mihi does one or both of two things: find a key at the
+# start of a line, and read an unsigned decimal. Through 1.3.1 each
+# module hand-rolled both: three copies of the line search and four of
+# the digit loop. The 2026-10-29 audit found the same defect in every
+# digit loop (finding B-2). Each capped itself at 18 digits, which is
+# what keeps the accumulator from wrapping, and then returned the first
+# 18 digits of a longer number as if it were the value. Bounding the
+# accumulator without rejecting the input is the half-fix the
+# 2026-08-23 methodology note warns about. One copy of each, here.
+# Both are inert on AGNOS (nothing calls them there) but are not
+# #ifdef'd: they are pure and the tests drive them on every target.
+
+# MIHI_UINT_DIGITS_MAX — 18 decimal digits is below 10^18 and so below
+# (2^63 - 1) / 10: the accumulator cannot wrap. No kernel file mihi
+# reads emits a number that long, so a 19th digit is corrupt input.
+# MIHI_UINT_NONE / MIHI_UINT_OVERLONG — _mihi_parse_uint's two failure
+# codes, as negative magnitudes.
+enum MihiScanLimit {
+    MIHI_UINT_DIGITS_MAX = 18;
+    MIHI_UINT_NONE = 1;
+    MIHI_UINT_OVERLONG = 2;
+}
+
+# Find `key` (`key_len` bytes) at the start of a line in buf[0 .. len):
+# at offset 0 or right after a '\n'. Returns the offset just past the
+# key, or 0 - 1. Walks line starts only, so a key is never matched
+# inside a longer line ("VERSION_ID=" is not "ID="). Pure.
+fn _mihi_find_line_prefix(buf, len, key, key_len): i64 {
+    if (key_len <= 0) { return 0 - 1; }
+    var i = 0;
+    var found = 0 - 1;
+    while (i + key_len <= len && found == 0 - 1) {
+        var matched = 1;
+        var j = 0;
+        while (j < key_len && matched == 1) {
+            if (load8(buf + i + j) != load8(key + j)) { matched = 0; }
+            j = j + 1;
+        }
+        if (matched == 1) {
+            found = i + key_len;
+        } else {
+            # next line start
+            while (i < len && load8(buf + i) != 10) { i = i + 1; }
+            i = i + 1;
+        }
+    }
+    return found;
+}
+
+# Read an unsigned decimal starting at buf[at] (inside buf[0 .. len)).
+# Returns the value (>= 0) and stores the offset of the first byte after
+# its digits at `end_out` (an 8-byte slot). Returns 0 - MIHI_UINT_NONE
+# when buf[at] is not a digit, and 0 - MIHI_UINT_OVERLONG when the run
+# is longer than MIHI_UINT_DIGITS_MAX digits; `end_out` is not written
+# on failure. A negative `at` is NONE, never a read before `buf`. Pure.
+fn _mihi_parse_uint(buf, len, at, end_out): i64 {
+    if (at < 0) { return 0 - MIHI_UINT_NONE; }
+    var p = at;
+    var v = 0;
+    var d = 0;
+    while (p < len && load8(buf + p) >= 48 && load8(buf + p) <= 57 && d < MIHI_UINT_DIGITS_MAX) {
+        v = v * 10 + (load8(buf + p) - 48);
+        d = d + 1;
+        p = p + 1;
+    }
+    if (d == 0) { return 0 - MIHI_UINT_NONE; }
+    if (p < len && load8(buf + p) >= 48 && load8(buf + p) <= 57) { return 0 - MIHI_UINT_OVERLONG; }
+    store64(end_out, p);
+    return v;
 }

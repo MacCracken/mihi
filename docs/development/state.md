@@ -5,6 +5,24 @@
 
 ## Version
 
+**1.3.2** — released 2026-10-29. **The third P(-1) audit**
+([`2026-10-29-audit.md`](../audit/2026-10-29-audit.md)), on the same pins
+as 1.3.1. It made fourteen code fixes, B-1 … B-14:
+
+- the read path now takes regular files only and opens with `O_NOCTTY`
+  (B-11); a repointed symlink could make a tty the controlling terminal;
+- overlong numbers are errors, not truncated values (B-2);
+- a truncation read that fails is a failure (B-1);
+- AGNOS uname slots are sealed (B-10);
+- the AGNOS CPUID path checks the maximum extended leaf (B-8);
+- three os-release edges are fixed (B-5 … B-7).
+
+Two shared scanners replace seven hand-rolled loops. `MIHI_IO_BLOCK`
+halves `mihi_cpu_model` (92 → 44 µs). A real fuzz harness, strict lint
+and a fuzz CI step were added. Tests went 143 → 214. One upstream side
+effect is recorded but not fixed: ai-hwaccel's no-exec PCIe pass can
+wake a runtime-suspended GPU (U-1).
+
 **1.3.1** — released 2026-10-29. Latest of everything: cyrius **6.7.9
 → 6.7.18**, ai-hwaccel **2.4.2 → 2.5.5**, bayan **1.5.14 → 1.11.1**. No
 probe code changed; 143/143. ai-hwaccel 2.5.5 is the release 1.3.0
@@ -261,7 +279,7 @@ M6 (chakshu) consumer gates closed; all seven v1.0 criteria from
 `roadmap.md` met. From here, signature / return-shape / error-
 semantics changes are real `Breaking` and require a major-version
 bump. v1.0 is shape-and-contract freeze, not feature freeze: the
-"Out of scope (for v1.0)" list in `roadmap.md` still bounds what
+"Out of scope" list in `roadmap.md` still bounds what
 mihi takes on. Cyrius toolchain pin bumped 6.0.0 → 6.0.1 (matches
 iam + chakshu; closes the cosmetic drift). `dist/mihi.cyr`
 regenerated for the version stamp; module content byte-identical
@@ -362,23 +380,25 @@ the log-level clamp (1.2.2). The one break was forced by the toolchain:
 `mihi_uname`'s value-form `Result` (1.2.6).
 
 - `src/types.cyr` (4 lines) — shared types (empty; `MihiInfo` deferred per ADR 0001)
-- `src/io.cyr` (149) — `_mihi_read_probe_file`, the one `/proc` + `/sys` read path: looped reads, bounded `-EINTR` retry, truncation detection (`MIHI_IO_WHOLE` vs `MIHI_IO_PREFIX`), `O_NONBLOCK` + `O_CLOEXEC`. Added at 1.2.3 per [ADR 0003](../adr/0003-shared-probe-read.md); inert on AGNOS
-- `src/cpu.cyr` (391) — `mihi_cpu_arch` ✅ + `mihi_cpu_count` ✅ + `mihi_cpu_model` ✅ (+ `mihi_parse_cpu_range` / `mihi_parse_cpu_model` pure-function helpers, and `mihi_cpu_model_cpuid` / `mihi_cpu_brand_fill` — the x86 CPUID brand-string path the AGNOS build dispatches to)
-- `src/mem.cyr` (155) — `mihi_mem_total` ✅ + `mihi_mem_free` ✅ (+ `mihi_find_meminfo_field` / `mihi_parse_meminfo_kb` / `mihi_extract_meminfo_bytes` helpers)
-- `src/kernel.cyr` (85) — `mihi_uname` wrapper over `sys_uname` (`Result`-wrapped since 1.1.3; **value-form pair since 1.2.6** — callers bind `var t, v =`, see the contract block on the function) + `mihi_kernel_name` ✅ + `mihi_kernel_version` ✅
-- `src/host.cyr` (199) — `mihi_hostname` ✅ + `mihi_uptime_secs` ✅ + `mihi_distro` ✅ (+ `mihi_parse_uptime_secs` / `mihi_find_osrelease_key` / `mihi_parse_osrelease_value` helpers)
+- `src/io.cyr` (322) — `_mihi_read_probe_file`, the one `/proc` + `/sys` read path, and since 1.3.2 the shared scanners `_mihi_find_line_prefix` / `_mihi_parse_uint`, the regular-file rule (stat + `O_NOCTTY` + fstat) and `MIHI_IO_BLOCK` ([ADR 0003](../adr/0003-shared-probe-read.md) amendment): looped reads, bounded `-EINTR` retry, truncation detection (`MIHI_IO_WHOLE` vs `MIHI_IO_PREFIX`), `O_NONBLOCK` + `O_CLOEXEC`. Added at 1.2.3 per [ADR 0003](../adr/0003-shared-probe-read.md); inert on AGNOS
+- `src/cpu.cyr` (452) — `mihi_cpu_arch` ✅ + `mihi_cpu_count` ✅ + `mihi_cpu_model` ✅ (+ `mihi_parse_cpu_range` / `mihi_parse_cpu_model` pure-function helpers, and `mihi_cpu_model_cpuid` / `mihi_cpu_brand_fill` — the x86 CPUID brand-string path the AGNOS build dispatches to)
+- `src/mem.cyr` (147) — `mihi_mem_total` ✅ + `mihi_mem_free` ✅ (+ `mihi_find_meminfo_field` / `mihi_parse_meminfo_kb` / `mihi_extract_meminfo_bytes` helpers)
+- `src/kernel.cyr` (145) — `mihi_uname` wrapper over `sys_uname` (`Result`-wrapped since 1.1.3; **value-form pair since 1.2.6** — callers bind `var t, v =`, see the contract block on the function) + `mihi_kernel_name` ✅ + `mihi_kernel_version` ✅
+- `src/host.cyr` (234) — `mihi_hostname` ✅ + `mihi_uptime_secs` ✅ + `mihi_distro` ✅ (+ `mihi_parse_uptime_secs` / `mihi_find_osrelease_key` / `mihi_parse_osrelease_value` helpers)
 - `src/gpu.cyr` (188) — `mihi_gpu_count` ✅ + `mihi_gpu_name` ✅ + `mihi_gpu_memory_bytes` ✅ + `mihi_gpu_family` ✅ + `mihi_gpu_type` ✅ (module-level singleton cache via `_mihi_gpu_ensure`; first call runs `registry_detect_no_exec()` under a save/clamp/restore of the caller's `sakshi` log level)
 - `src/main.cyr` (24) — convenience re-export (consumed by smoke + tests; not in distlib bundle)
 - `programs/agnos_probe.cyr` (65) — the AGNOS-clean probe subset (no `gpu.cyr`, so no ai-hwaccel); prints raw values with no early return so one QEMU boot shows the whole surface. Driven by `scripts/mihi-agnos-verify.py`
 - `programs/smoke.cyr` (120) — smoke binary (Linux + aarch64 only — see the 1.2.4 note); prints `kernel / release / arch / host / model / cpus / mem MiB / free MiB / uptime / distro / gpu cnt / gpu / gpu MiB`
-- `dist/mihi.cyr` (1200 lines; 1171 by `cyrius distlib`'s own count) — the consumable bundle, opening with a compile-verified `# Requires` block; `dist/mihi.deps` is the stdlib-leaf sidecar beside it (`sys`, `syscalls`), both CI-gated against drift
+- `dist/mihi.cyr` (1521 lines; 1492 by `cyrius distlib`'s own count) — the consumable bundle, opening with a compile-verified `# Requires` block; `dist/mihi.deps` is the stdlib-leaf sidecar beside it (`sys`, `syscalls`), both CI-gated against drift
 - `cpu.cyr`, `mem.cyr`, `kernel.cyr` and `host.cyr` each `include "lib/sys.cyr"` (1.2.8). A no-op in mihi's own build; in the bundle it seeds the sidecar — see [architecture 001](../architecture/001-bundle-and-dependency-shape.md)
 
 ## Tests
 
-- `tests/mihi.tcyr` — primary suite: **143 assertions on x86 / 144 on
-  aarch64, across 56 test groups** (the arm64 build drops the 5
-  CPUID-vs-`/proc` assertions and adds 6 device-tree ones) (104 from the 0.5.0 hardening push, 4 from the 0.6.0 audit
+- `tests/mihi.tcyr` — primary suite: **214 assertions on x86** (143
+  through 1.3.1; the aarch64 count has not been re-run since 1.2.4's
+  144, which dropped the 5 CPUID-vs-`/proc` assertions and added 6
+  device-tree ones). Slice G (1.3.2) has one group per 2026-10-29 code
+  finding, each naming the 1.3.1 result. (104 from the 0.5.0 hardening push, 4 from the 0.6.0 audit
   regressions, 5 from the 1.2.0 CPUID work, 3 from the 1.2.2 log-level
   clamp, 21 from the 1.2.3 audit — Slice F, 6+ from the 1.2.4 arm64
   work). Slice A: real-uname happy path + zero-init buffer +
@@ -407,8 +427,13 @@ the log-level clamp (1.2.2). The one break was forced by the toolchain:
   scales, `mihi_uname` leaving no poison byte behind, single-quoted
   os-release values (and an apostrophe inside a double-quoted one), and
   the previously untested `VERSION_ID=` / `ID=` prefix-shadowing case.
-- `tests/mihi.bcyr` — benchmark stub
-- `tests/mihi.fcyr` — fuzz stub
+- `benches/{probe_paths,parsers,gpu_paths}.bcyr` — the benchmark suite, run by `scripts/bench-history.sh` into `docs/benchmarks/`. (Through 1.3.1 this line listed a `tests/mihi.bcyr` stub that does not exist.)
+- `tests/mihi.fcyr` — mutation fuzzer (1.3.2; an empty stub before).
+  Fixed-seed xorshift mutation of realistic inputs for every pure
+  parser, checking result ranges, returned-pointer bounds and canary
+  bands around the buffer: 180,000 checks a run. CI runs it plain,
+  `--bounds` and `--poison`. Mutation-checked: a planted out-of-bounds
+  write and a disabled seal were both caught.
 
 ## Build
 
@@ -416,7 +441,8 @@ the log-level clamp (1.2.2). The one break was forced by the toolchain:
 cyrius deps
 cyrius build programs/smoke.cyr build/mihi-smoke
 ./build/mihi-smoke            # 11+ lines incl. gpu cnt / gpu / gpu MiB + "mihi smoke ok", exit 0, empty stderr
-cyrius test tests/mihi.tcyr   # 143/143 pass (144/144 on aarch64)
+cyrius test tests/mihi.tcyr   # 214/214 pass
+cyrius fuzz tests/mihi.fcyr   # 180,000 checks; also --bounds, --poison
 cyrius build --agnos programs/agnos_probe.cyr build/mihi-agnos-probe   # sovereign-target cross-build (smoke links gpu.cyr, which agnos can't run)
 ```
 
@@ -426,8 +452,11 @@ matches the pinned snapshot exactly, and smoke's stderr is empty
 (ai-hwaccel's detect logging is clamped for the one detect call; see
 the 1.2.2 note above). The smoke build, the test build and all three
 cross-target builds print **0 warnings**, and so do the benches.
-Sizes: smoke 593,520 B, `CYRIUS_DCE=1` smoke 237,168 B (533,160 /
-217,768 B at 1.3.0).
+Sizes: smoke 597,680 B, `CYRIUS_DCE=1` smoke 237,232 B (593,520 /
+237,168 B at 1.3.1). Benchmarks were re-baselined at the 1.3.2 audit:
+`cdcd15b` (1.3.1 on 6.7.18) and `cdcd15b-dirty` (1.3.2) in
+`docs/benchmarks/history.csv`. The previous rows were from `188a7d3`
+(1.2.3).
 
 Expected output that is not mihi's to fix:
 
@@ -568,6 +597,12 @@ Closed at 1.3.1: **the phantom TPU** (opened at 1.3.0). ai-hwaccel 2.5.5
 classifies `/sys/class/accel` nodes by driver and PCI vendor. Still
 worth a smoke run on a Core Ultra or other `/sys/class/accel` host; none
 was available, so the fix is read from source, not measured here.
+
+Open from the 1.3.2 audit — **ai-hwaccel's no-exec PCIe pass can wake a
+suspended GPU** (U-1). `enrich_pcie` reads `max_link_{width,speed}`,
+which the kernel serves through `pci_config_pm_runtime_get()`, so
+`mihi_gpu_count()` can resume a hybrid laptop's dGPU from D3cold. To
+file upstream (roadmap 1.6.x).
 
 Open follow-up from 1.3.1: **the log-level clamp in `_mihi_gpu_ensure()`.**
 Since ai-hwaccel 2.5.5 keeps its own WARN threshold, the clamp changes

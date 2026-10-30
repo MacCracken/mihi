@@ -840,12 +840,12 @@ fn main() {
 
     # ----- audit M-1: meminfo_kb digit cap defends against overflow -
     # A 19-digit value is the i64 boundary; mihi caps at 18 to leave
-    # headroom. 18 digits parses fully; the 19th is silently dropped
-    # (regression test asserts the cap behavior, not the value).
-    test_group("audit M-1 — meminfo_kb caps digits");
+    # headroom. Through 1.3.1 the 19th digit was silently dropped and
+    # this test asserted the truncated value. Audit B-2 (2026-10-29)
+    # reversed that: past the cap is malformed input, so -1.
+    test_group("audit M-1 / B-2 — meminfo_kb rejects past the digit cap");
 
-    # 19-digit value "1234567890123456789" — parser should stop at
-    # 18 digits, yielding 123456789012345678 (last digit dropped).
+    # 19-digit value "1234567890123456789" — an error, not 123456789012345678.
     var mlong = "MemTotal: 1234567890123456789 kB\n";
     var mlong_buf[64];
     var mlong_len: i64 = strlen(mlong);
@@ -856,11 +856,11 @@ fn main() {
     }
     var mlong_pos: i64 = mihi_find_meminfo_field(&mlong_buf, mlong_len, "MemTotal:", 9);
     var mlong_kb: i64 = mihi_parse_meminfo_kb(&mlong_buf, mlong_len, mlong_pos);
-    assert_eq(mlong_kb, 123456789012345678,
-      "19-digit value truncated to 18 digits (cap engaged)");
+    assert_eq(mlong_kb, 0 - 1,
+      "19-digit value -> -1, not its first 18 digits (B-2)");
 
     # ----- audit C-2: uptime_secs same cap ---------------------------
-    test_group("audit C-2 — uptime_secs caps digits");
+    test_group("audit C-2 / B-2 — uptime_secs rejects past the digit cap");
 
     var ulong = "1234567890123456789.00 100.00\n";
     var ulong_buf[48];
@@ -871,8 +871,8 @@ fn main() {
         ulong_i = ulong_i + 1;
     }
     assert_eq(mihi_parse_uptime_secs(&ulong_buf, ulong_len),
-      123456789012345678,
-      "uptime 19-digit input capped at 18 digits");
+      0 - 1,
+      "uptime 19-digit input -> -1, not its first 18 digits (B-2)");
 
 
     # ====================================================================
@@ -1071,6 +1071,248 @@ fn main() {
     assert_eq(vid_start, 16, "ID= anchors to its own line, not inside VERSION_ID=");
     var vid_val = mihi_parse_osrelease_value(&vid_buf, vid_len, vid_start);
     assert_eq(streq(vid_val, "arch"), 1, "ID value is 'arch', not '1'");
+
+    # ====================================================================
+    # Slice G — 2026-10-29 P(-1) audit regressions (1.3.2).
+    # One group per finding that changed code. Each asserts the fixed
+    # behaviour and says what 1.3.1 returned instead.
+    # ====================================================================
+
+    # ----- B-1: the truncation read's errors are failures --------------
+    test_group("audit B-1 — truncation-read errors fail, not pass");
+    assert_eq(_mihi_io_verdict(100, 0), 100, "EOF after a full buffer -> the count");
+    assert_eq(_mihi_io_verdict(100, 1), 0 - MIHI_IO_TRUNC, "one more byte -> TRUNC");
+    assert_eq(_mihi_io_verdict(100, 0 - EINTR), 0 - MIHI_IO_FAIL,
+      "-EINTR past the budget -> FAIL (1.3.1: 100, a cut file)");
+    assert_eq(_mihi_io_verdict(100, 0 - 5), 0 - MIHI_IO_FAIL,
+      "-EIO -> FAIL (1.3.1: 100)");
+    assert_eq(_mihi_io_verdict(0, 0), 0 - MIHI_IO_FAIL, "empty file -> FAIL");
+
+    # ----- B-2: one digit reader, overlong is an error ------------------
+    test_group("audit B-2 — _mihi_parse_uint");
+    var pu_end[8];
+    store64(&pu_end, 0);
+    var pu1 = "123 kB";
+    assert_eq(_mihi_parse_uint(pu1, 6, 0, &pu_end), 123, "'123 kB' -> 123");
+    assert_eq(load64(&pu_end), 3, "end offset is past the digits");
+    var pu18 = "999999999999999999";
+    assert_eq(_mihi_parse_uint(pu18, 18, 0, &pu_end), 999999999999999999,
+      "18 digits is the largest accepted run");
+    var pu19 = "9999999999999999999";
+    assert_eq(_mihi_parse_uint(pu19, 19, 0, &pu_end), 0 - MIHI_UINT_OVERLONG,
+      "19 digits -> OVERLONG");
+    assert_eq(_mihi_parse_uint("x1", 2, 0, &pu_end), 0 - MIHI_UINT_NONE, "non-digit -> NONE");
+    assert_eq(_mihi_parse_uint("12", 2, 2, &pu_end), 0 - MIHI_UINT_NONE, "at == len -> NONE");
+    var cr19 = "1234567890123456789\n";
+    assert_eq(mihi_parse_cpu_range(cr19, 20), 0,
+      "19-digit CPU number -> 0 (1.3.1: 2, split at the cap)");
+
+    # ----- B-3: malformed CPU lists are 0, not a partial count ----------
+    test_group("audit B-3 — cpu_range malformed anywhere -> 0");
+    assert_eq(mihi_parse_cpu_range("0-3,x\n", 6), 0, "'0-3,x' -> 0 (1.3.1: 4)");
+    assert_eq(mihi_parse_cpu_range("5-\n", 3), 0, "'5-' -> 0 (1.3.1: 1)");
+    assert_eq(mihi_parse_cpu_range("0-3x\n", 5), 0, "'0-3x' -> 0 (1.3.1: 4)");
+    assert_eq(mihi_parse_cpu_range("0-3,8-11\n", 9), 8, "well-formed list unchanged");
+    assert_eq(mihi_parse_cpu_range("10-5\n", 5), 1, "C-1 descending coercion kept");
+
+    # ----- B-4: an empty model value is null ----------------------------
+    test_group("audit B-4 — empty 'model name' value -> null");
+    var em = "processor\t: 0\nmodel name\t: \nflags\t: fpu\n";
+    var em_buf[64];
+    var em_len: i64 = strlen(em);
+    var em_i = 0;
+    while (em_i < em_len) {
+        store8(&em_buf + em_i, load8(em + em_i));
+        em_i = em_i + 1;
+    }
+    assert_eq(mihi_parse_cpu_model(&em_buf, em_len), 0, "empty value -> 0 (1.3.1: \"\")");
+
+    # ----- MIHI_IO_BLOCK + _mihi_has_blank_line ---------------------------
+    test_group("io.cyr — MIHI_IO_BLOCK stops at the first record");
+    assert_eq(_mihi_has_blank_line("a\n\nb", 0, 4), 1, "blank line inside the range");
+    assert_eq(_mihi_has_blank_line("ab\n\nc", 3, 5), 1, "pair split across two reads");
+    assert_eq(_mihi_has_blank_line("a\nb\n", 0, 4), 0, "no blank line");
+    #ifndef CYRIUS_TARGET_AGNOS
+    var blk_buf[8192];
+    var blk_n: i64 = _mihi_read_probe_file("/proc/cpuinfo", &blk_buf, 8192, MIHI_IO_BLOCK);
+    assert(blk_n > 0, "BLOCK read of /proc/cpuinfo succeeds");
+    assert_eq(_mihi_has_blank_line(&blk_buf, 0, blk_n), 1, "and holds CPU 0's whole record");
+    #ifndef CYRIUS_ARCH_AARCH64
+    var pre_buf[8192];
+    var pre_n: i64 = _mihi_read_probe_file("/proc/cpuinfo", &pre_buf, 8192, MIHI_IO_PREFIX);
+    var blk_model = mihi_parse_cpu_model(&blk_buf, blk_n);
+    var pre_model = mihi_parse_cpu_model(&pre_buf, pre_n);
+    assert(blk_model != 0, "BLOCK read yields a model on x86 Linux");
+    if (blk_model != 0 && pre_model != 0) {
+        assert_eq(streq(blk_model, pre_model), 1, "BLOCK and PREFIX give the same model");
+    }
+    assert(blk_n <= pre_n, "BLOCK never reads more than PREFIX");
+    # Where /proc/cpuinfo overflows the 8 KiB buffer (many CPUs), PREFIX
+    # fills it and BLOCK must have stopped early. Small CI runners skip this.
+    if (pre_n == 8192) { assert(blk_n < pre_n, "BLOCK stops before the buffer is full"); }
+    #endif
+    #endif
+
+    # ----- B-5 / B-6 / B-7: os-release value edges ------------------------
+    test_group("audit B-5 — a quoted value ends at its line");
+    var oq = "PRETTY_NAME=\"Foo\nNAME=\"Bar\"\n";
+    var oq_buf[64];
+    var oq_len: i64 = strlen(oq);
+    var oq_i = 0;
+    while (oq_i < oq_len) {
+        store8(&oq_buf + oq_i, load8(oq + oq_i));
+        oq_i = oq_i + 1;
+    }
+    var oq_start: i64 = mihi_find_osrelease_key(&oq_buf, oq_len, "PRETTY_NAME=", 12);
+    assert_eq(mihi_parse_osrelease_value(&oq_buf, oq_len, oq_start), 0,
+      "open quote -> 0 (1.3.1: \"Foo\\nNAME=\")");
+
+    test_group("audit B-6 / B-7 — _mihi_osrelease_pick");
+    var oe = "NAME=Arch\nID=arch";
+    var oe_buf[32];
+    var oe_len: i64 = strlen(oe);
+    var oe_i = 0;
+    while (oe_i < oe_len) {
+        store8(&oe_buf + oe_i, load8(oe + oe_i));
+        oe_i = oe_i + 1;
+    }
+    var oe_v = _mihi_osrelease_pick(&oe_buf, oe_len, 32);
+    assert(oe_v != 0, "bare ID at EOF, no newline -> a value (1.3.1: null)");
+    if (oe_v != 0) { assert_eq(streq(oe_v, "arch"), 1, "...and it is 'arch'"); }
+    var ob = "PRETTY_NAME=\"\"\nID=arch\n";
+    var ob_buf[48];
+    var ob_len: i64 = strlen(ob);
+    var ob_i = 0;
+    while (ob_i < ob_len) {
+        store8(&ob_buf + ob_i, load8(ob + ob_i));
+        ob_i = ob_i + 1;
+    }
+    var ob_v = _mihi_osrelease_pick(&ob_buf, ob_len, 48);
+    assert(ob_v != 0, "empty PRETTY_NAME falls back to ID (1.3.1: null)");
+    if (ob_v != 0) { assert_eq(streq(ob_v, "arch"), 1, "...and it is 'arch'"); }
+    var oo = "PRETTY_NAME=\"Open\nID=arch\n";
+    var oo_buf[48];
+    var oo_len: i64 = strlen(oo);
+    var oo_i = 0;
+    while (oo_i < oo_len) {
+        store8(&oo_buf + oo_i, load8(oo + oo_i));
+        oo_i = oo_i + 1;
+    }
+    var oo_v = _mihi_osrelease_pick(&oo_buf, oo_len, 48);
+    assert(oo_v != 0, "open-quoted PRETTY_NAME falls back to ID");
+    if (oo_v != 0) { assert_eq(streq(oo_v, "arch"), 1, "...and it is 'arch'"); }
+    assert_eq(_mihi_osrelease_pick(&oe_buf, 0, 32), 0, "n == 0 -> null");
+
+    # ----- B-8: CPUID brand leaves only when the CPU has them -------------
+    test_group("audit B-8 — CPUID max extended leaf");
+    assert_eq(_mihi_cpuid_brand_ok(2147483651), 0, "0x80000003 -> no brand leaves");
+    assert_eq(_mihi_cpuid_brand_ok(2147483652), 1, "0x80000004 -> brand leaves");
+    assert_eq(_mihi_cpuid_brand_ok(2147483656), 1, "0x80000008 -> brand leaves");
+    assert_eq(_mihi_cpuid_brand_ok(13), 0, "a basic-leaf value -> no");
+    assert_eq(_mihi_cpuid_brand_ok(2147549184), 0, "0x80010000 -> out of range");
+    var mx_slot[8];
+    store64(&mx_slot, 0);
+    #ifdef CYRIUS_ARCH_X86
+    assert_eq(_mihi_cpuid_max_ext(&mx_slot), 1, "CPUID answers on x86");
+    assert_eq(_mihi_cpuid_brand_ok(load64(&mx_slot)), 1, "this host has the brand leaves");
+    #endif
+    #ifdef CYRIUS_ARCH_AARCH64
+    assert_eq(_mihi_cpuid_max_ext(&mx_slot), 0, "no CPUID on aarch64");
+    #endif
+
+    # ----- B-10: every utsname slot ends inside itself -------------------
+    test_group("audit B-10 — _mihi_uts_seal");
+    var ag[64];
+    var ag_i = 0;
+    while (ag_i < 64) { store8(&ag + ag_i, 0); ag_i = ag_i + 1; }
+    store8(&ag + 0, 65); store8(&ag + 1, 71);                   # "AG" in slot 0
+    ag_i = 16;
+    while (ag_i < 32) { store8(&ag + ag_i, 104); ag_i = ag_i + 1; }   # slot 1: 16 x 'h', no NUL
+    store8(&ag + 48, 120);                                      # "x" in slot 3
+    assert_eq(_mihi_uts_seal(&ag, 64, 16), 1, "one full slot zeroed");
+    assert_eq(load8(&ag + 16), 0, "the full slot reads as an empty field");
+    assert_eq(load8(&ag + 31), 0, "...all of it");
+    assert_eq(load8(&ag + 0), 65, "terminated slots untouched");
+    assert_eq(load8(&ag + 48), 120, "the last slot untouched");
+    ag_i = 48;
+    while (ag_i < 64) { store8(&ag + ag_i, 109); ag_i = ag_i + 1; }   # last slot full
+    assert_eq(_mihi_uts_seal(&ag, 64, 16), 1, "a full last slot is zeroed too");
+    assert_eq(load8(&ag + 63), 0, "so mihi_cpu_arch cannot run past the buffer");
+    assert_eq(_mihi_uts_seal(&uts, UTS_SIZE, MIHI_UTS_FIELD), 0,
+      "a real uname struct needs no sealing");
+
+    # ----- B-11: regular files only ---------------------------------------
+    test_group("audit B-11 — the read path takes regular files only");
+    assert_eq(_mihi_is_regular(33188), 1, "0100644 -> regular");
+    assert_eq(_mihi_is_regular(8592), 0, "0020620 (char device) -> no");
+    assert_eq(_mihi_is_regular(16877), 0, "0040755 (directory) -> no");
+    assert_eq(_mihi_is_regular(4480), 0, "0010600 (FIFO) -> no");
+    #ifndef CYRIUS_TARGET_AGNOS
+    var nr_buf[32];
+    assert_eq(_mihi_read_probe_file("/dev/zero", &nr_buf, 16, MIHI_IO_PREFIX), 0 - MIHI_IO_FAIL,
+      "/dev/zero refused (1.3.1: 16 zero bytes)");
+    assert_eq(_mihi_read_probe_file("/dev/null", &nr_buf, 16, MIHI_IO_WHOLE), 0 - MIHI_IO_FAIL,
+      "/dev/null refused");
+    assert_eq(_mihi_read_probe_file("/proc", &nr_buf, 16, MIHI_IO_WHOLE), 0 - MIHI_IO_FAIL,
+      "a directory refused");
+    assert(_mihi_read_probe_file("/etc/os-release", &nr_buf, 16, MIHI_IO_PREFIX) > 0,
+      "a symlink to a regular file still reads");
+    #endif
+
+    # ----- B-12: a negative start never reads before the buffer -----------
+    test_group("audit B-12 — negative start offsets");
+    var ng = "7MemTotal: 5 kB\n";
+    assert_eq(mihi_parse_meminfo_kb(ng + 1, 15, 0 - 1), 0 - 1,
+      "meminfo_kb(start = -1) -> -1 (1.3.1: read the '7' before buf)");
+    assert_eq(mihi_parse_osrelease_value(ng + 1, 15, 0 - 1), 0,
+      "osrelease_value(start = -1) -> 0 (1.3.1: buf - 1)");
+    assert_eq(_mihi_parse_uint(ng + 1, 15, 0 - 1, &pu_end), 0 - MIHI_UINT_NONE,
+      "parse_uint(at = -1) -> NONE");
+
+    # ----- branches the 1.3.2 review found untested -----------------------
+    test_group("1.3.2 review — previously untested branches");
+    #ifndef CYRIUS_TARGET_AGNOS
+    var on_buf[1024];
+    var on_n: i64 = _mihi_read_probe_file("/sys/devices/system/cpu/online", &on_buf, 1024, MIHI_IO_WHOLE);
+    assert(on_n > 0, "cpu/online reads");
+    assert_eq(_mihi_read_probe_file("/sys/devices/system/cpu/online", &on_buf, on_n, MIHI_IO_WHOLE), on_n,
+      "a file exactly `cap` bytes long is whole, not TRUNC");
+    #endif
+    var cb48[64];
+    assert_eq(mihi_cpu_model_cpuid(&cb48, 48), 0, "cpuid model with cap 48 -> 0 (needs 49)");
+    var mk = "MemTotal: kB\n";
+    var mk_pos: i64 = mihi_find_meminfo_field(mk, 13, "MemTotal:", 9);
+    assert_eq(mihi_parse_meminfo_kb(mk, 13, mk_pos), 0 - 1, "'MemTotal: kB' (no digits) -> -1");
+    var pe = "PRETTY_NAME=";
+    assert_eq(mihi_parse_osrelease_value(pe, 12, 12), 0, "key at EOF with no value -> 0");
+    var ie = "ID=\n";
+    var ie_buf[8];
+    store8(&ie_buf + 0, 73); store8(&ie_buf + 1, 68); store8(&ie_buf + 2, 61); store8(&ie_buf + 3, 10);
+    assert_eq(mihi_parse_osrelease_value(&ie_buf, 4, 3), 0, "empty bare value -> 0");
+    assert_eq(mihi_gpu_name(0 - 1), 0, "gpu name at idx -1 -> 0");
+    assert_eq(mihi_gpu_memory_bytes(0 - 1), 0 - 1, "gpu memory at idx -1 -> -1");
+
+    # PREFIX / BLOCK property: whatever `cap` a caller passes, the probe
+    # returns null or the whole model string — never a fragment of it.
+    #ifndef CYRIUS_TARGET_AGNOS
+    #ifndef CYRIUS_ARCH_AARCH64
+    test_group("cpu.cyr — mihi_cpu_model never returns part of a model");
+    var full_buf[8192];
+    var full_model = mihi_cpu_model(&full_buf, 8192);
+    assert(full_model != 0, "the 8192-byte call yields a model");
+    var cap_buf[8192];
+    var bad = 0;
+    var cap_i = 1;
+    while (cap_i <= 300) {
+        var cm = mihi_cpu_model(&cap_buf, cap_i);
+        if (cm != 0) {
+            if (streq(cm, full_model) != 1) { bad = bad + 1; }
+        }
+        cap_i = cap_i + 1;
+    }
+    assert_eq(bad, 0, "cap 1..300: every non-null result is the full model");
+    #endif
+    #endif
 
     return assert_summary();
 }

@@ -97,7 +97,7 @@ jobs:
         # determinism steps below, not by cyrfmt.
         run: |
           fail=0
-          for f in src/*.cyr programs/*.cyr tests/*.tcyr benches/*.bcyr; do
+          for f in src/*.cyr programs/*.cyr tests/*.tcyr tests/*.fcyr benches/*.bcyr; do
             [ -f "$f" ] || continue
             if cyrius fmt "$f" --check; then
               echo "  ok: $f"
@@ -112,16 +112,24 @@ jobs:
       - name: Lint
         # Same tolerance policy as darshana: every src file clean; the
         # only acceptable warning is the cosmetic "exceeds 120
-        # characters" rule on comment-divider lines. `cyrius lint`
-        # exits non-zero on any output, so we wrap in `|| true` to
-        # coexist with the implicit `set -e`.
+        # characters" rule on comment-divider lines. `--strict` since
+        # 1.3.2, which also reports deferral words ("not yet", "TODO")
+        # with no CHANGELOG / issue / roadmap cross-reference. An
+        # untracked deferral fails the step, as does a non-zero exit.
+        # Through 1.3.1 the step ran plain `cyrius lint`, which exits 0
+        # on warnings, so only the grep could fail it.
         run: |
           fail=0
           for f in src/*.cyr; do
-            out=$(cyrius lint "$f" 2>&1 || true)
+            rc=0
+            out=$(cyrius lint --strict "$f" 2>&1) || rc=$?
             echo "$out"
+            [ "$rc" -eq 0 ] || fail=1
             bad=$(echo "$out" | grep -E '^\s*warn ' | grep -v 'exceeds 120 characters' || true)
             if [ -n "$bad" ]; then
+              fail=1
+            fi
+            if echo "$out" | grep -qE '^[1-9][0-9]* untracked deferrals'; then
               fail=1
             fi
           done
@@ -132,6 +140,18 @@ jobs:
         # between releases (see darshana's note). Using the documented
         # `cyrius test <file>` form avoids the discovery surface.
         run: cyrius test tests/mihi.tcyr
+
+      - name: Fuzz
+        # tests/mihi.fcyr mutates seed inputs for every pure parser and
+        # checks result ranges, returned-pointer bounds and canary bands
+        # around the buffer (out-of-bounds writes). Deterministic, so a
+        # failure reproduces; its exit code names the failed check. Run
+        # plain, bounds-checked and with allocator poisoning. Added at
+        # 1.3.2; the file was an empty stub before.
+        run: |
+          cyrius fuzz tests/mihi.fcyr
+          cyrius fuzz --bounds tests/mihi.fcyr
+          cyrius fuzz --poison tests/mihi.fcyr
 
       - name: distlib drift check
         # Regenerate dist/mihi.cyr from current src/ and verify it
@@ -333,6 +353,8 @@ jobs:
                    scripts/bench-history.sh \
                    scripts/mihi-agnos-verify.py \
                    programs/agnos_probe.cyr \
+                   tests/mihi.fcyr \
+                   docs/architecture/001-bundle-and-dependency-shape.md \
                    dist/mihi.cyr dist/mihi.deps; do
             if [ -f "$f" ]; then echo "  OK: $f"
             else echo "  MISSING: $f"; MISSING=1; fi

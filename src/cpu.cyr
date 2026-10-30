@@ -11,21 +11,23 @@
 # uname(2) / sysinfo(2) wrappers and their per-target UTS_* / SI_* offsets.
 include "lib/sys.cyr"
 
-# `cyrius build --agnos` does NOT predefine CYRIUS_ARCH_X86 (only a native x86 build
-# does), so the CPUID brand asm below (guarded #ifdef CYRIUS_ARCH_X86) was compiled
-# OUT on agnos → CPU rendered "(unknown)" while iam ran fine. agnos IS x86, so map it:
-# (a future aarch64-agnos would set CYRIUS_ARCH_AARCH64 and skip this.)
-#ifdef CYRIUS_TARGET_AGNOS
-#define CYRIUS_ARCH_X86
-#endif
+# The CPUID brand asm below is guarded `#ifdef CYRIUS_ARCH_X86`. Through
+# 1.3.1 this module also defined CYRIUS_ARCH_X86 for every AGNOS build:
+# 1.2.1 needed that, because cyrius 6.2.x did not predefine it for
+# `--agnos`. cyrius 6.7.18 does (measured with a marker build: `--agnos`
+# defines CYRIUS_ARCH_X86, `--aarch64` defines CYRIUS_ARCH_AARCH64). The
+# define was therefore redundant, and wrong in two ways (audit B-14). It
+# leaked into every module after it, consumer code included. And it
+# claimed x86 for *any* AGNOS build, so a future aarch64 AGNOS target
+# would have assembled x86 CPUID bytes.
 
 # ----- Slice A — uname.machine -------------------------------------
 
 # Return a pointer to the null-terminated machine field within `uts`.
 # Caller must have already filled `uts` via mihi_uname.
 # Source: utsname.machine (offset 260, see sys.cyr UTS_MACHINE) —
-# kernel arch identifier ("x86_64", "aarch64", etc.). On AGNOS-native
-# this will eventually come from the boot-info struct instead.
+# kernel arch identifier ("x86_64", "aarch64", etc.). On AGNOS it is
+# the machine slot of AGNOS's own uname struct (offset 48).
 # Returns cstring so println() dispatches to the string overload.
 fn mihi_cpu_arch(uts): cstring {
     return uts + UTS_MACHINE;
@@ -72,10 +74,18 @@ enum MihiCpuLimit {
 # MIHI_CPU_MAX (2^20 — two orders of magnitude past Linux's 8192-CPU
 # CONFIG_NR_CPUS ceiling) means corrupt input, and the function reports
 # malformed input the way it already does elsewhere: return 0.
+#
+# Defensive (2026-10-29 audit B-2, B-3): malformed input anywhere is 0.
+# Through 1.3.1 the function returned the count so far when it met a
+# byte that was neither digit nor separator ("0-3,x" gave 4). "5-" (a
+# dash with no end) counted 1, and a number past the 18-digit cap was
+# split into two "CPUs" at the cap. All three are plausible wrong counts
+# from a file the kernel only ever writes as digits, '-', ',' and '\n'.
 fn mihi_parse_cpu_range(buf, len): i64 {
     var total = 0;
     var i = 0;
     var done = 0;
+    var e[8];
     while (done == 0) {
         # skip separators (' ', '\n', ',')
         while (i < len && (load8(buf + i) == 32 || load8(buf + i) == 10 || load8(buf + i) == 44)) {
@@ -85,31 +95,24 @@ fn mihi_parse_cpu_range(buf, len): i64 {
             done = 1;
             continue;
         }
-        var c0 = load8(buf + i);
-        if (c0 < 48 || c0 > 57) {
-            # non-digit, non-separator — malformed; stop counting.
+        var lo = _mihi_parse_uint(buf, len, i, &e);
+        if (lo < 0) {
+            # not a digit, or past the digit cap — malformed.
+            total = 0;
             done = 1;
             continue;
         }
-        # parse lo (cap 18 digits — audit C-2 / overflow defense)
-        var lo = 0;
-        var ld = 0;
-        while (i < len && load8(buf + i) >= 48 && load8(buf + i) <= 57 && ld < 18) {
-            lo = lo * 10 + (load8(buf + i) - 48);
-            ld = ld + 1;
-            i = i + 1;
-        }
+        i = load64(&e);
         # optional -hi
         var hi = lo;
         if (i < len && load8(buf + i) == 45) {
-            i = i + 1;
-            hi = 0;
-            var hd = 0;
-            while (i < len && load8(buf + i) >= 48 && load8(buf + i) <= 57 && hd < 18) {
-                hi = hi * 10 + (load8(buf + i) - 48);
-                hd = hd + 1;
-                i = i + 1;
+            hi = _mihi_parse_uint(buf, len, i + 1, &e);
+            if (hi < 0) {
+                total = 0;
+                done = 1;
+                continue;
             }
+            i = load64(&e);
         }
         # Coerce descending ranges (audit C-1).
         if (hi < lo) { hi = lo; }
@@ -127,7 +130,9 @@ fn mihi_parse_cpu_range(buf, len): i64 {
 }
 
 # Count logical CPUs from /sys/devices/system/cpu/online.
-# Returns logical CPU count, or 0 - 1 on open/read/truncation error.
+# Returns logical CPU count, 0 - 1 on open/read/truncation error, or 0
+# when the file's content is malformed (mihi_parse_cpu_range's error
+# value; through 1.3.1 this comment did not mention it).
 # Source: kernel/cpu.c::cpu_online_mask exported via sysfs, formatted
 # with %*pbl (Documentation/admin-guide/cputopology.rst).
 fn mihi_cpu_count(): i64 {
@@ -141,7 +146,11 @@ fn mihi_cpu_count(): i64 {
     var rc = sys_sysinfo(&info);
     if (rc != 0) { return 0 - 1; }
     var n = load64(&info + SI_CPUS);
-    if (n < 1) { return 1; }
+    # Bounded like the Linux arm (audit B-9). Zero or negative is no CPU
+    # count at all, and through 1.3.1 it was reported as 1, a fact the
+    # kernel did not state. Past MIHI_CPU_MAX is corrupt, not a machine.
+    if (n < 1) { return 0 - 1; }
+    if (n > MIHI_CPU_MAX) { return 0 - 1; }
     return n;
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
@@ -167,25 +176,28 @@ fn mihi_cpu_count(): i64 {
 #
 # Mutates `buf` (writes a single NUL byte). Pure parser otherwise —
 # unit-testable against a synthetic cpuinfo buffer.
+#
+# 1.3.2: the search is the shared line-anchored scan in io.cyr, which
+# visits line starts only (the old byte-by-byte "\nmodel name" search
+# compared at every offset). An empty value ("model name\t: \n") is
+# now null, not "" — an empty string is not a CPU model (audit B-4).
 fn mihi_parse_cpu_model(buf, len): cstring {
-    var target = "\nmodel name";
-    var tlen = 11;
-    var i = 0;
-    var found = 0 - 1;
-    while (i + tlen <= len && found == 0 - 1) {
-        # "matched" not "match" — match is a reserved keyword in cyrius.
-        var matched = 1;
-        var j = 0;
-        while (j < tlen && matched == 1) {
-            if (load8(buf + i + j) != load8(target + j)) { matched = 0; }
-            j = j + 1;
+    var p = _mihi_find_line_prefix(buf, len, "model name", 10);
+    if (p == 10) {
+        # A match at offset 0 is not a /proc/cpuinfo line — the file opens
+        # with "processor" — so, as before 1.3.2, it does not count: look
+        # again from the next line start.
+        var q = 0;
+        while (q < len && load8(buf + q) != 10) { q = q + 1; }
+        q = q + 1;
+        p = 0 - 1;
+        if (q < len) {
+            var p2 = _mihi_find_line_prefix(buf + q, len - q, "model name", 10);
+            if (p2 >= 0) { p = q + p2; }
         }
-        if (matched == 1) { found = i + 1; }  # +1 skips the leading '\n'
-        i = i + 1;
     }
-    if (found == 0 - 1) { return 0; }
-    # Skip past "model name" (10 bytes), then any \t/space/':' before the value.
-    var p = found + 10;
+    if (p < 0) { return 0; }
+    # Skip any \t/space/':' between the key and the value.
     while (p < len && (load8(buf + p) == 9 || load8(buf + p) == 32 || load8(buf + p) == 58)) {
         p = p + 1;
     }
@@ -193,13 +205,15 @@ fn mihi_parse_cpu_model(buf, len): cstring {
     var start = p;
     while (p < len && load8(buf + p) != 10) { p = p + 1; }
     if (p >= len) { return 0; }
+    if (p == start) { return 0; }
     store8(buf + p, 0);
     return buf + start;
 }
 
 # ----- Slice B (aarch64 Linux) — device-tree CPU compatible ---------
 #
-# arm64 Linux publishes no `model name` line (audit D-1 / roadmap): the
+# arm64 Linux publishes no `model name` line (audit D-1; the ACPI
+# residual is roadmap 1.7.x): the
 # kernel's c_show() prints CPU implementer / part / revision as raw
 # hex and nothing human-readable. Verified on iron, agnosarm (Raspberry
 # Pi 4 Model B, kernel 6.8.0-1053-raspi):
@@ -311,12 +325,54 @@ fn mihi_cpu_brand_fill(buf): i64 {
     #endif
 }
 
+# Store CPUID.80000000H:EAX — the highest extended leaf this CPU answers
+# — into out[0..3]; the caller zeroes the 8-byte slot first. x86 only.
+# Returns 1 on x86, 0 otherwise. Same param_load idiom as
+# mihi_cpu_brand_fill below.
+fn _mihi_cpuid_max_ext(out): i64 {
+    #ifdef CYRIUS_ARCH_X86
+    asm {
+        param_load(rdi, 0);            # out (param 0)
+        0xB8; 0x00; 0x00; 0x00; 0x80;  # mov eax, 0x80000000
+        0x53;                          # push rbx
+        0x0F; 0xA2;                    # cpuid
+        0x89; 0x07;                    # mov [rdi], eax
+        0x5B;                          # pop rbx
+    }
+    return 1;
+    #endif
+    #ifndef CYRIUS_ARCH_X86
+    return 0;
+    #endif
+}
+
+# 1 when `max` (CPUID.80000000H:EAX) says leaves 0x80000002-4 exist.
+# Valid extended maxima sit in 0x80000000-0x8000FFFF; the brand string
+# needs 0x80000004 or higher. Pure.
+fn _mihi_cpuid_brand_ok(max): i64 {
+    if (max < 2147483652) { return 0; }   # 0x80000004
+    if (max > 2147549183) { return 0; }   # 0x8000FFFF
+    return 1;
+}
+
 # CPUID brand → trimmed, NUL-terminated cstring in `buf`. `cap` must be >= 49
 # (48 brand bytes + NUL). Strips trailing padding (AMD NUL-pads, Intel space-pads)
 # and skips Intel's leading-space left-pad. Returns a cstring into `buf`, or 0 on
-# non-x86 / too-small buf / all-blank brand.
+# non-x86 / too-small buf / no brand leaves / all-blank brand.
+#
+# Defensive (2026-10-29 audit B-8): the brand leaves are asked for only
+# when CPUID.80000000H says they exist. Through 1.3.1 they were read
+# unconditionally. On a CPU, or under a hypervisor, whose highest
+# extended leaf is below 0x80000004, Intel's SDM (Vol. 2A, CPUID) has an
+# out-of-range leaf return the highest *basic* leaf's registers. So the
+# "brand" was 48 bytes of unrelated register data returned as a model
+# name. This is the AGNOS path.
 fn mihi_cpu_model_cpuid(buf, cap): cstring {
     if (cap < 49) { return 0; }
+    var mx[8];
+    store64(&mx, 0);
+    if (_mihi_cpuid_max_ext(&mx) == 0) { return 0; }   # non-x86
+    if (_mihi_cpuid_brand_ok(load64(&mx)) == 0) { return 0; }
     if (mihi_cpu_brand_fill(buf) == 0) { return 0; }   # non-x86
     store8(buf + 48, 0);
     # strip trailing spaces / NULs
@@ -342,10 +398,14 @@ fn mihi_cpu_model_cpuid(buf, cap): cstring {
 # per logical CPU and measures 26 kB on a 16-thread box, growing with
 # core count. It is "CPU 0's block fits", which is all this probe wants
 # (see mihi_parse_cpu_model on why it anchors to the first block). So
-# this is the one read in mihi that passes MIHI_IO_PREFIX: a short read
-# is the expected case, not an error. That is safe only because the
-# parser cannot return a partial value — if the buffer ends before the
-# line's closing newline it returns 0, never half a brand string.
+# this is the one read in mihi that does not ask for the whole file: a
+# short read is the expected case, not an error. That is safe only
+# because the parser cannot return a partial value — if the buffer ends
+# before the line's closing newline it returns 0, never half a brand
+# string. Since 1.3.2 it reads MIHI_IO_BLOCK, which also stops once CPU
+# 0's record (its terminating blank line) is in the buffer. Through
+# 1.3.1 it read MIHI_IO_PREFIX: the full 8192 bytes, that is CPU 0's
+# record and four more the kernel generated and mihi never looked at.
 # Source: fs/proc/cpuinfo.c → arch-specific show_cpuinfo(), i.e.
 # arch/x86/kernel/cpu/proc.c. The "model name" field is the human brand
 # string from CPUID brand-string leaves 0x80000002/3/4.
@@ -383,7 +443,8 @@ fn mihi_cpu_model(buf, cap): cstring {
     return mihi_parse_dt_string(buf, na);
     #endif
     #ifndef CYRIUS_ARCH_AARCH64
-    var n = _mihi_read_probe_file("/proc/cpuinfo", buf, cap, MIHI_IO_PREFIX);
+    # BLOCK: stop at the end of CPU 0's record (see MIHI_IO_BLOCK in io.cyr).
+    var n = _mihi_read_probe_file("/proc/cpuinfo", buf, cap, MIHI_IO_BLOCK);
     if (n < 0) { return 0; }
     return mihi_parse_cpu_model(buf, n);
     #endif

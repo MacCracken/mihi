@@ -24,10 +24,11 @@
 #     /etc/os-release is small (~1 kB in practice) so a 1 KiB scratch
 #     buffer is sufficient.
 #
-# AGNOS-native: hostname will come from the boot-info struct alongside
-# the other uname facts; uptime from a future native clock primitive;
-# distro is a Linux-userland concept (the file lives in initramfs/root)
-# and is not on the native code path.
+# AGNOS: hostname comes from AGNOS's uname syscall (#34) and uptime
+# from its sysinfo (#35), both through lib/sys.cyr, shipped at 1.1.2 /
+# 1.1.3. distro is a Linux-userland concept and reports "AGNOS". Through
+# 1.3.1 this said hostname and uptime would come from a boot-info struct
+# and a future clock primitive (audit E-2).
 
 # uname(2) / sysinfo(2) wrappers and their per-target UTS_* / SI_* offsets.
 include "lib/sys.cyr"
@@ -57,19 +58,15 @@ fn mihi_hostname(uts): cstring {
 # against integer overflow on adversarial /proc/uptime content. Real
 # kernel uptime is bounded by clock resolution and process lifetime;
 # 10 digits covers ~300 years.
+#
+# Defensive (2026-10-29 audit B-2): past the cap is an error. Through
+# 1.3.1 a 19-digit uptime came back as its first 18 digits, a plausible
+# wrong number, and nothing downstream rejected it.
 fn mihi_parse_uptime_secs(buf, len): i64 {
     if (len <= 0) { return 0 - 1; }
-    var p = 0;
-    var v = 0;
-    var has = 0;
-    var d = 0;
-    while (p < len && load8(buf + p) >= 48 && load8(buf + p) <= 57 && d < 18) {
-        v = v * 10 + (load8(buf + p) - 48);
-        has = 1;
-        d = d + 1;
-        p = p + 1;
-    }
-    if (has == 0) { return 0 - 1; }
+    var e[8];
+    var v = _mihi_parse_uint(buf, len, 0, &e);
+    if (v < 0) { return 0 - 1; }
     return v;
 }
 
@@ -83,7 +80,9 @@ fn mihi_uptime_secs(buf, cap): i64 {
     # AGNOS has no /proc/uptime — uptime comes from sysinfo#35 (SI_UPTIME, secs).
     var si[120];
     if (sys_sysinfo(&si) != 0) { return 0 - 1; }
-    return sysinfo_uptime(&si);
+    var up = sysinfo_uptime(&si);
+    if (up < 0) { return 0 - 1; }   # a u64 past i64 max (audit B-9)
+    return up;
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
     var n = _mihi_read_probe_file("/proc/uptime", buf, cap, MIHI_IO_WHOLE);
@@ -99,25 +98,9 @@ fn mihi_uptime_secs(buf, cap): i64 {
 # must be at offset 0 or be preceded by '\n'. Returns the offset of
 # the first value byte (past the '='), or 0 - 1 if not found.
 # Pure function — exposed for unit tests against synthetic buffers.
+# Since 1.3.2 this is the shared line-anchored scan in io.cyr.
 fn mihi_find_osrelease_key(buf, len, key, key_len): i64 {
-    var i = 0;
-    var found = 0 - 1;
-    while (i + key_len <= len && found == 0 - 1) {
-        var anchored = 0;
-        if (i == 0) { anchored = 1; }
-        if (i > 0 && load8(buf + i - 1) == 10) { anchored = 1; }
-        if (anchored == 1) {
-            var matched = 1;
-            var j = 0;
-            while (j < key_len && matched == 1) {
-                if (load8(buf + i + j) != load8(key + j)) { matched = 0; }
-                j = j + 1;
-            }
-            if (matched == 1) { found = i + key_len; }
-        }
-        i = i + 1;
-    }
-    return found;
+    return _mihi_find_line_prefix(buf, len, key, key_len);
 }
 
 # Given an offset `start` pointing at the first byte of a value in an
@@ -125,9 +108,20 @@ fn mihi_find_osrelease_key(buf, len, key, key_len): i64 {
 # cstring pointer to its first character. Handles the three shapes the
 # spec allows: `KEY="double quoted"`, `KEY='single quoted'`, and
 # `KEY=bare-token`. For a quoted value the matching closing quote is
-# overwritten with NUL; for a bare value the trailing '\n' (or EOF)
-# is. Returns 0 if the value is empty or unterminated.
-# Mutates `buf` (writes one NUL byte).
+# overwritten with NUL; for a bare value the trailing '\n' is. Returns 0
+# if the value is empty or unterminated, and that includes a bare value
+# that runs to the end of `buf` with no newline. mihi_distro guarantees
+# the newline, but this function cannot write past `len` (through 1.3.1
+# this comment said "(or EOF)", which the code never did). Mutates
+# `buf` (writes one NUL byte) on success only.
+#
+# Defensive (2026-10-29 audit B-5): a quoted value ends at its line. An
+# os-release assignment is one line, so a closing quote is only looked
+# for before the next '\n'. Through 1.3.1 the scan ran on into later
+# lines: `PRETTY_NAME="Foo` with no closing quote, followed by
+# `NAME="Bar"`, came back as the multi-line value `Foo\nNAME=`.
+# /etc/os-release is the one input mihi reads that a package or a
+# container image writes.
 #
 # Source: freedesktop os-release(5) — "Variable assignment values must
 # be enclosed in double or single quotes if they include spaces,
@@ -148,6 +142,9 @@ fn mihi_find_osrelease_key(buf, len, key, key_len): i64 {
 # ID. Documented in docs/sources.md as a known limit rather than
 # silently unimplemented.
 fn mihi_parse_osrelease_value(buf, len, start): cstring {
+    # A negative `start` (a missing key) is 0. Through 1.3.1 it returned
+    # a pointer one byte before `buf` (audit B-12).
+    if (start < 0) { return 0; }
     if (start >= len) { return 0; }
     var p = start;
     var v = p;
@@ -155,7 +152,8 @@ fn mihi_parse_osrelease_value(buf, len, start): cstring {
     if (quote == 34 || quote == 39) {
         p = p + 1;
         v = p;
-        while (p < len && load8(buf + p) != quote) { p = p + 1; }
+        while (p < len && load8(buf + p) != quote && load8(buf + p) != 10) { p = p + 1; }
+        if (p < len && load8(buf + p) == 10) { return 0; }   # unterminated on its line
     } else {
         while (p < len && load8(buf + p) != 10) { p = p + 1; }
     }
@@ -180,20 +178,57 @@ fn mihi_parse_osrelease_value(buf, len, start): cstring {
 # lands on a FIFO must not be allowed to hang the caller. mihi's first
 # consumer renders the login MOTD; a hang there is a login denial.
 # Source: man 5 os-release; freedesktop.org/software/systemd/man/os-release.html.
+#
+# Two 1.3.2 changes (2026-10-29 audit B-6, B-7):
+#   - The read leaves one byte of `cap` spare, and a file whose last line
+#     has no newline gets one there. os-release(5) does not require a
+#     trailing newline, and through 1.3.1 a bare value on that last line
+#     (`ID=arch` at EOF) returned null. So the file must now fit in
+#     `cap - 1` bytes.
+#   - The ID fallback also covers a PRETTY_NAME that is present but
+#     unusable (empty, or a quote left open), not only an absent one.
+#     A failed parse writes nothing, so the second key is read from the
+#     same, unmodified buffer.
 fn mihi_distro(buf, cap): cstring {
     #ifdef CYRIUS_TARGET_AGNOS
     # /etc/os-release is a Linux-userland concept (lives in the rootfs); on the
-    # sovereign target the distro IS the OS. Report it directly.
-    return "AGNOS";
+    # sovereign target the distro IS the OS. Report it directly, written into
+    # `buf` as the contract above says. Through 1.3.1 this returned the string
+    # literal itself, so a consumer editing the result in place edited the
+    # literal (audit B-13).
+    var ag = "AGNOS";
+    if (cap < 6) { return 0; }
+    var k = 0;
+    while (k < 6) {
+        store8(buf + k, load8(ag + k));
+        k = k + 1;
+    }
+    return buf;
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
-    var n = _mihi_read_probe_file("/etc/os-release", buf, cap, MIHI_IO_WHOLE);
+    if (cap < 2) { return 0; }
+    var n = _mihi_read_probe_file("/etc/os-release", buf, cap - 1, MIHI_IO_WHOLE);
     if (n < 0) { return 0; }
-    var start = mihi_find_osrelease_key(buf, n, "PRETTY_NAME=", 12);
-    if (start < 0) {
-        start = mihi_find_osrelease_key(buf, n, "ID=", 3);
+    return _mihi_osrelease_pick(buf, n, cap);
+    #endif
+}
+
+# mihi_distro after the read: `buf` holds `n` bytes of os-release, and
+# `cap` is its capacity. Give a last line with no newline one (when
+# n < cap), then PRETTY_NAME, else ID. Returns a cstring into `buf`, or 0.
+# Pure, so the tests can drive the edge cases without touching
+# /etc/os-release.
+fn _mihi_osrelease_pick(buf, n, cap): cstring {
+    if (n <= 0) { return 0; }
+    if (load8(buf + n - 1) != 10 && n < cap) {
+        store8(buf + n, 10);
+        n = n + 1;
     }
+    var v = 0;
+    var start = mihi_find_osrelease_key(buf, n, "PRETTY_NAME=", 12);
+    if (start >= 0) { v = mihi_parse_osrelease_value(buf, n, start); }
+    if (v != 0) { return v; }
+    start = mihi_find_osrelease_key(buf, n, "ID=", 3);
     if (start < 0) { return 0; }
     return mihi_parse_osrelease_value(buf, n, start);
-    #endif
 }

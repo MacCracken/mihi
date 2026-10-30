@@ -30,8 +30,8 @@ read buffer (writes one NUL byte to terminate the value).
 
 | Probe             | Source                                      | Authority                                                                                                                                 | Notes |
 | ----------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ----- |
-| `mihi_cpu_count`  | `/sys/devices/system/cpu/online`            | `Documentation/admin-guide/cputopology.rst`; kernel `kernel/cpu.c::cpu_online_mask` printed via `%*pbl` format                            | Parses comma-separated ranges (`"0-15"`, `"0-3,5-7"`, `"0"`). Bare `N` treated as `N-N`. Scratch grew 64 → 1024 bytes at 1.2.3 (audit A-1): `%*pbl` emits a *range list*, so a box with many offline CPUs produces a long value that 64 bytes cut mid-range — silently undercounting. Total is capped at `MIHI_CPU_MAX` (2^20). |
-| `mihi_cpu_model`  | `/proc/cpuinfo` first `model name` value    | man 5 proc; kernel `fs/proc/cpuinfo.c` → arch `show_cpuinfo()` (e.g. `arch/x86/kernel/cpu/proc.c`)                                        | Line-anchored search for `"\nmodel name"` pins us to CPU 0's block — first-block-only honours "one source per fact" on big.LITTLE. Caller supplies 8 kB scratch, which is *CPU 0's block fits*, not *the file fits*: /proc/cpuinfo is one block per logical CPU and measures 26 kB on a 16-thread host. The only read in mihi using `MIHI_IO_PREFIX`. **Three targets, three sources, no fallback between them** — AGNOS → CPUID brand; **aarch64 Linux → `/sys/firmware/devicetree/base/cpus/cpu@0/compatible`** (arm64's `c_show()` emits no `model name` line at all, audit D-1, closed at 1.2.4 and verified on a Raspberry Pi 4: `arm,cortex-a72`); x86 Linux → this row. ⚠ ACPI-booted arm64 has no device tree → still null. The two Linux arms return different flavours of string (marketing brand vs DT compatible tuple), both raw. |
+| `mihi_cpu_count`  | `/sys/devices/system/cpu/online`            | `Documentation/admin-guide/cputopology.rst`; kernel `kernel/cpu.c::cpu_online_mask` printed via `%*pbl` format                            | Parses comma-separated ranges (`"0-15"`, `"0-3,5-7"`, `"0"`). Bare `N` treated as `N-N`. Scratch grew 64 → 1024 bytes at 1.2.3 (audit A-1): `%*pbl` emits a *range list*, so a box with many offline CPUs produces a long value that 64 bytes cut mid-range — silently undercounting. Total is capped at `MIHI_CPU_MAX` (2^20). Since 1.3.2 any byte outside the kernel's `%*pbl` alphabet (decimal, `-`, `,`, `\n`; `drivers/base/cpu.c` `sysfs_emit("%*pbl\n")`, `lib/vsprintf.c` `bitmap_list_string`) makes the whole value malformed, and the probe returns 0. Through 1.3.1 it returned the count so far (audit B-3). AGNOS: sysinfo#35 `cpus`; 0 or past `MIHI_CPU_MAX` is -1 (B-9). |
+| `mihi_cpu_model`  | `/proc/cpuinfo` first `model name` value    | man 5 proc; kernel `fs/proc/cpuinfo.c` → arch `show_cpuinfo()` (e.g. `arch/x86/kernel/cpu/proc.c`)                                        | Line-anchored search for `"\nmodel name"` pins us to CPU 0's block — first-block-only honours "one source per fact" on big.LITTLE. Caller supplies 8 kB scratch, which is *CPU 0's block fits*, not *the file fits*: /proc/cpuinfo is one block per logical CPU and measures 26 kB on a 16-thread host. The only read in mihi that does not ask for the whole file: `MIHI_IO_BLOCK` since 1.3.2, which stops at the blank line ending CPU 0's record (44 µs against 92 µs reading the full 8 kB on the dev host). An empty value is null (B-4). The AGNOS CPUID path checks `CPUID.80000000H:EAX` ≥ 0x80000004 before reading the brand leaves, as Linux's `get_model_name` does (B-8). **Three targets, three sources, no fallback between them** — AGNOS → CPUID brand; **aarch64 Linux → `/sys/firmware/devicetree/base/cpus/cpu@0/compatible`** (arm64's `c_show()` emits no `model name` line at all, audit D-1, closed at 1.2.4 and verified on a Raspberry Pi 4: `arm,cortex-a72`); x86 Linux → this row. ⚠ ACPI-booted arm64 has no device tree → still null. The two Linux arms return different flavours of string (marketing brand vs DT compatible tuple), both raw. |
 
 ## Slice C — /proc/meminfo (M1, v0.2.0)
 
@@ -79,9 +79,12 @@ per-probe `open / read / close`. What that means for a reader of this
 table:
 
 - A file larger than the caller's buffer is an **error**, not a short
-  parse — except for `/proc/cpuinfo`, the one `MIHI_IO_PREFIX` read,
-  where a prefix is what the probe wants. Before 1.2.3 an undersized
-  buffer produced a plausible wrong value with no error (audit A-1).
+  parse — except for `/proc/cpuinfo`, where a prefix is what the probe
+  wants. It is read `MIHI_IO_BLOCK` since 1.3.2: stop at the blank line
+  that ends CPU 0's record (`MIHI_IO_PREFIX`, the full buffer, through
+  1.3.1). Before 1.2.3 an undersized buffer produced a plausible wrong
+  value with no error (audit A-1). Since 1.3.2 the one-byte "is there
+  more?" read's own errors are failures too (audit B-1).
 - Reads are looped, so a short `read(2)` is not mistaken for EOF, and
   `-EINTR` is retried (bounded at 8) rather than reported as "fact
   unavailable".
@@ -90,8 +93,48 @@ table:
   a symlink, so `O_NOFOLLOW` is not available, and a symlink repointed
   at a FIFO would otherwise hang the caller — which for `iam` means the
   login path.
+- **Regular files only** (1.3.2, audit B-11). The path is `stat(2)`'d
+  and opened only if it is S_IFREG, the open adds `O_NOCTTY`, and the
+  descriptor is `fstat(2)`'d again before any read. Every source in this
+  file is a regular file (procfs and sysfs attributes; `/etc/os-release`
+  is a symlink to one), so the rule refuses only what a repointed
+  symlink could land on: a tty (which would otherwise become a session
+  leader's controlling terminal), a device node, a FIFO, a directory.
+  The residual is a device node swapped in between the stat and the
+  open (audit U-3).
+- **Numbers**: one digit reader (`_mihi_parse_uint`) for every parser,
+  capped at 18 digits. A 19th digit is malformed input and an error;
+  through 1.3.1 the first 18 digits were returned as the value (audit
+  B-2).
 - Not used on AGNOS: every probe takes a `sysinfo(2)` / CPUID /
   constant path there.
+
+## Limits a consumer should know (1.3.2 audit)
+
+These are recorded rather than fixed. The audit's L-numbers are in
+brackets.
+
+- **Raw bytes.** mihi does not filter control characters from
+  `PRETTY_NAME`, the hostname or the CPU model [L-3]. os-release(5)
+  says non-printables "should not" be used, which is not a must. A
+  UTS-namespace root (an unprivileged user, through a user namespace)
+  can put any byte in a hostname, and a hypervisor can set any CPUID
+  brand. Per CLAUDE.md mihi returns raw values and consumers sanitize
+  before rendering, as iam's F-001 renderer does.
+- **os-release details**: with duplicate keys the first wins, where a
+  shell takes the last [L-1]. A CRLF file's bare value keeps its `\r`
+  [L-2]. Backslash escapes are not unescaped [L-7].
+  `/usr/lib/os-release` is not consulted when `/etc/os-release` is
+  absent, although os-release(5) defines that lookup; roadmap 1.7.x
+  [L-4].
+- **CPU model**: an x86 CPU with an empty brand string makes the kernel
+  print `model name : unknown`, and mihi returns that word [L-6]. On
+  arm64 the device-tree read uses `cpu@0`, which is conventional but not
+  guaranteed: a cpu node's unit address is its MPIDR affinity [L-5]. On
+  ACPI-booted arm64 there is no device tree at all (D-1 residual).
+- **Uptime** is the caller's time-namespace view [L-9].
+- **Containers**: under LXCFS these `/proc` and `/sys` files are served by
+  a FUSE daemon, and a hung daemon hangs the read (audit U-3).
 
 ## Slice E — accelerator-identity probes (M3, v0.4.0)
 

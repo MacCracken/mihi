@@ -20,6 +20,12 @@ HISTORY_FILE="${1:-docs/benchmarks/history.csv}"
 RESULTS_MD="docs/benchmarks/results.md"
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+# Uncommitted changes to anything the benches build from make the run a
+# different program from HEAD; label it so, as ai-hwaccel's rows do. Through
+# 1.3.1 a dirty tree's rows carried HEAD's bare hash.
+if ! git diff --quiet HEAD -- src programs benches cyrius.cyml cyrius.lock lib 2>/dev/null; then
+    COMMIT="${COMMIT}-dirty"
+fi
 BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
 CYRIUS_VER=$(cyrius --version 2>/dev/null || echo unknown)
 

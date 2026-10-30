@@ -137,8 +137,31 @@ which the smoke binary caught immediately.
   negative return, and a caller-supplied status pointer is a second
   buffer the caller has to own — against ADR 0001's grain.
 
+## Amendment — 1.3.2 (2026-10-29 audit)
+
+The decision stands, and three things were added to the module it created:
+
+- **A third read mode, `MIHI_IO_BLOCK`**: PREFIX that stops once the
+  buffer holds a blank line, the end of the file's first record.
+  `/proc/cpuinfo` builds a record per CPU as it is read, and the probe
+  wants CPU 0's. It halved `mihi_cpu_model` (92 → 44 µs on the dev host).
+- **A regular-file rule** (finding B-11): stat the path, open with
+  `O_NOCTTY`, fstat the descriptor, and refuse anything that is not
+  S_IFREG. The read path is the one place every probe passes through,
+  which is why the rule lives here and not in each probe. It is the
+  reason for this ADR, applied once more.
+- **The shared scanners** (`_mihi_find_line_prefix`, `_mihi_parse_uint`).
+  They are not I/O, so this widens `io.cyr` from "the read path" to "the
+  read path and the two primitives every parser of what it reads uses".
+  The alternative was a seventh `[lib]` module. That would be ADR-worthy
+  in itself, would add a bundle-order constraint, and would hold two
+  functions. The 2026-10-29 audit found the same defect (B-2) in every
+  copy of the digit loop, which is the argument this ADR made for the
+  read itself.
+
 ## References
 
+- [`docs/audit/2026-10-29-audit.md`](../audit/2026-10-29-audit.md) — findings B-1, B-2, B-11 (the amendment above)
 - [`docs/audit/2026-08-23-audit.md`](../audit/2026-08-23-audit.md) — findings A-1 … A-4, D-1 … D-3
 - [ADR 0001](0001-shared-uts-buffer.md) — caller-supplies-buffer convention
 - [ADR 0002](0002-gpu-singleton-cache.md) — the other place mihi departs from the plain-probe shape

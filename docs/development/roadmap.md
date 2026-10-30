@@ -1,286 +1,158 @@
 # mihi — Roadmap
 
-> Forward-only milestone plan to v1.0. Shipped work lives in
-> [`../../CHANGELOG.md`](../../CHANGELOG.md) and the live status in
-> [`state.md`](state.md) — this file is the sequencing of what's
-> next, in what order, against what dependency gates.
+> Open work only, grouped into releases. Shipped work lives in
+> [`../../CHANGELOG.md`](../../CHANGELOG.md), live state in
+> [`state.md`](state.md). An item leaves this file when it ships; one that
+> slips moves to a later release rather than being marked done here.
 
-## v1.0 criteria ✅ all met 2026-05-20
+Every 1.x release keeps the 1.0 contract. Probe signatures, return shapes
+and error semantics stay frozen, and anything that would break them waits
+in [v2.0](#v20--breaking-parked). The rules for probes (pure reads, one
+source per fact, cited sources, caller-owned buffers) are in
+[`CLAUDE.md`](../../CLAUDE.md).
 
-The mihi v1.0 contract: a frozen probe surface that `iam`, `chakshu`,
-and downstream consumers can pin against indefinitely.
+## 1.4.x — Verification on real targets
 
-- [x] Probe API frozen — function signatures, return shapes, error
-      semantics documented and tested for the full module set
-      (`types` / `cpu` / `mem` / `kernel` / `host` / `gpu`)
-- [x] Every probe has a `/proc`, `/sys`, or syscall source citation
-      inline in the declaring function
-- [x] `docs/sources.md` has one entry per probe with man-page /
-      kernel-doc reference (Slices A + B + C + D + E)
-- [x] Test coverage: happy path + at least one error path
-      (missing file, malformed content) per probe; **108 assertions
-      across 41 test groups**
-- [x] Benchmarks captured in `docs/benchmarks.md` for the hot
-      probes (CPU detect, mem total) — three-tier suite under
-      `benches/` with `scripts/bench-history.sh` writing the history
-      CSV
-- [x] At least two downstream consumers green —
-      [`iam`](https://github.com/MacCracken/iam) 0.9.0 RC (pinned
-      mihi 0.7.0) and
-      [`chakshu`](https://github.com/MacCracken/chakshu) 0.6.0
-      (pinned mihi 0.8.0)
-- [x] Security audit pass —
-      [`docs/audit/2026-05-19-audit.md`](../audit/2026-05-19-audit.md)
-      — bounds on every `/proc` parse, syscall return handling, no
-      allocator dependency from probe internals
+Several facts in `state.md` are true by reading, not by running, on the
+current pins. This release runs them.
 
-## Milestones
+- **AGNOS.** Run `scripts/mihi-agnos-verify.py` in QEMU on the current
+  pins. It last ran at 1.2.4 (cyrius 6.5.35). Its prerequisites are an agnos
+  build, `agnsh` and gnoboot's `BOOTX64.EFI`. This also covers the 1.3.2
+  AGNOS fixes, which are compile-verified only: B-8 (CPUID max leaf), B-9
+  (sysinfo bounds; a 0 CPU count is now -1), B-10 (the uname seal) and
+  B-13 (`mihi_distro` into `buf`).
+- **arm64 hardware.** Run the suite and the fuzz harness on agnosarm
+  (Raspberry Pi 4). They last ran at 1.2.4, when the suite was 144
+  assertions there. CI only compiles `--aarch64`; decide whether a
+  `qemu-aarch64` run can be a gate, given that the device-tree assertions
+  read the host's `/sys`.
+- **Accelerator hosts.** ai-hwaccel 2.5.5's `/sys/class/accel` driver
+  routing (the phantom-TPU fix), the Intel NPU path and the Vulkan sysfs
+  scan have been read from source but never seen on hardware. Wanted: a
+  Core Ultra or Ryzen AI host, plus an NVIDIA or Intel GPU host. Also a
+  hybrid-graphics laptop, to measure whether `mihi_gpu_count()` wakes a
+  runtime-suspended dGPU (audit U-1: `power/runtime_status` before and
+  after).
+- **Consumers.** `iam` and `chakshu` both pin mihi 1.2.1. Build each one
+  against mihi HEAD in a scratch copy, confirm the 1.2.6 `mihi_uname`
+  bind and the 1.2.8 sidecar change are the only edits they need, and
+  leave a note in each repo. Do not edit them from here.
+- **Acceptance**: each run recorded in `state.md` with date, host and pins.
 
-### M2 — Host identity probes (v0.3.0)
+## 1.5.x — Documentation and consumer guidance
 
-Three small probes that close the "tell me about this box" surface
-for the login MOTD path. Signatures follow
-[ADR 0001](../adr/0001-shared-uts-buffer.md) — caller-supplied
-buffers, no probe-internal allocation.
+- **`docs/examples/` is empty.** Add runnable examples: the smallest
+  consumer (kernel / CPU / memory), and a GPU listing.
+- **Guides.** Write a toolchain-bump guide (the pin-move recipe now lives
+  only in `state.md`), and a consumer-integration guide. The integration
+  guide should cover:
+  - include order and repin rules;
+  - the expected `bayan_json_v_*` warnings;
+  - null handling (`mihi_cpu_model` on ACPI arm64, `mihi_gpu_name`);
+  - sanitizing before rendering (mihi returns raw bytes, and a hostname,
+    PRETTY_NAME or CPUID brand can carry control characters, audit L-3);
+  - the LXCFS hang (U-3).
+- Refresh `README.md` and `docs/guides/getting-started.md` against the
+  current pins and the published sidecar.
 
-- `mihi_hostname(uts)` — `utsname.nodename` (offset 65). Reuses the
-  same uts buffer M1's kernel/cpu_arch probes fill, so a consumer
-  pays one `uname(2)` for all four facts.
-- `mihi_uptime_secs(buf, cap)` — first whitespace-separated field of
-  `/proc/uptime`, parsed as decimal seconds (drop the fractional
-  part). 64-byte scratch is plenty.
-- `mihi_distro(buf, cap)` — `PRETTY_NAME="…"` from `/etc/os-release`;
-  fall back to `ID=…` if PRETTY_NAME is absent. Caller supplies
-  ~1 KiB scratch; probe handles the quote-stripping in place.
-- Tests for each + missing-file / malformed-content paths.
-- **Dep gate**: none — stdlib + agnosys.
-- **Acceptance**: smoke prints `hostname / distro / uptime` lines on
-  Linux.
+## 1.6.x — Upstream follow-through
 
-### M3 — GPU probe (v0.4.0) ✅ shipped 2026-05-19
+- **The bayan-json workaround.** File the cyrius issue: distlib's sidecar
+  verify credits a name that only a named dep's module leaves undefined
+  to the bundle being published. That is still true on 6.7.18. Once a
+  fixed cyrius is pinned, drop `[deps.bayan]` and `[features]` and confirm
+  the sidecar stays `sys syscalls`.
+- **The sakshi log-level clamp** in `_mihi_gpu_ensure()`. Since ai-hwaccel
+  2.5.5 keeps its own WARN threshold, the clamp changes nothing by
+  default. It still caps a consumer that raised ai-hwaccel's level for
+  mihi's one detect call. Decide whether to keep it; the 1.2.2 tests pin
+  the save / restore.
+- **ai-hwaccel's no-exec PCIe pass wakes suspended devices** (audit U-1).
+  `enrich_pcie` reads `max_link_{width,speed}`, which the kernel serves
+  through `pci_config_pm_runtime_get()`. File the issue upstream, asking
+  for a no-wake path: skip a device whose `power/runtime_status` is
+  `suspended`; reading that attribute does not resume the device. Take
+  the fix when it ships.
+- **gpu.cyr on AGNOS.** `programs/smoke.cyr` faults on AGNOS before its
+  first line because it links the ai-hwaccel bundle (thread / atomic,
+  Linux `CLONE_VM`). Re-measure with ai-hwaccel 2.5.5. If it still
+  faults, write an ADR on whether the gpu probes report an empty registry
+  on AGNOS, or whether the blocker stays until upstream fixes it.
 
-- ✅ `mihi_gpu_*` family — 5 probes (`mihi_gpu_count` + idx-keyed
-  `mihi_gpu_{name,memory_bytes,family,type}`) wrap ai-hwaccel 2.2.5's
-  `registry_detect_no_exec()`. Module-level singleton cache means
-  one detection pass per process; subsequent calls are O(n) vec walks.
-  See [ADR 0002](../adr/0002-gpu-singleton-cache.md) for the cache-
-  shape choice.
-- ✅ Single source per the *one source per fact* principle — sysfs
-  reads via ai-hwaccel; no fallback chain to `lspci` / nvidia-smi /
-  etc.
-- ✅ **Dep gate cleared 2026-05-19**: ai-hwaccel 2.2.4 added the
-  `[lib].modules` surface + `dist/ai-hwaccel.cyr` bundle; 2.2.5 added
-  the `registry_detect_no_exec()` entry point that masks off the
-  eight subprocess-shelling backends (CUDA, Apple, Vulkan, Gaudi,
-  Neuron, Intel oneAPI, Cerebras, Graphcore) and skips
-  `detect_interconnects`. Mihi pinned `[deps.ai-hwaccel] tag = "2.2.6"`
-  at this milestone (bumped from 2.2.5 in 0.4.1, see below) and calls
-  only `registry_detect_no_exec()` — the no-exec contract is enforced
-  on the ai-hwaccel side. **Current pin: 2.5.5** (1.3.1). There
-  `registry_detect_no_exec()` drops only CUDA and Intel oneAPI, which
-  find nothing without a tool, and runs the other 16 backends with
-  their vendor-tool runs skipped. Re-measured at the 1.3.1 bump. See
-  [`state.md`](state.md) for the live pin.
-- ✅ **Safe backends mihi sees**: ROCm, Intel NPU, AMD XDNA, TPU,
-  Qualcomm, Groq, Samsung NPU, MediaTek APU — plus the sysfs
-  post-passes (`enrich_bandwidth/pcie/numa`, `detect_storage`,
-  `detect_environment`). Since 1.2.8 (ai-hwaccel 2.3.27 / 2.3.29) also
-  Vulkan's `/sys/class/drm` scan (NVIDIA and Intel cards; AMD is left
-  to ROCm) and, on Asahi Linux, Apple's device-tree check. Since
-  1.3.1 (ai-hwaccel 2.5.5) also Gaudi, Neuron, Cerebras and Graphcore
-  through their device nodes, with `/sys/class/accel` nodes assigned
-  by driver.
-- ✅ **Acceptance**: smoke prints `gpu cnt: 1 / gpu: AMD Radeon
-  (PCI 0x1002:0x1638) / gpu MiB: 3072` on archaemenid (Ryzen 5800H +
-  Radeon iGPU).
+## 1.7.x — Coverage gaps (additive, inside the planned module set)
 
-### M3.1 — ai-hwaccel 2.2.6 dep refresh (v0.4.1) ✅ shipped 2026-05-19
+- **`mihi_cpu_model` on ACPI-booted arm64** still returns null, because
+  there is no device tree; this is the residual from finding D-1.
+  Candidates are the SMBIOS processor record
+  (`/sys/firmware/dmi/entries/4-*/raw`) or a MIDR implementer / part
+  table. Either must be argued as that boot path's own source, not a
+  fallback chain, in an ADR before any code.
+- **arm64: `cpu@0` is conventional, not guaranteed** (audit L-5). A cpu
+  node's unit address is its MPIDR affinity. Settle it with the ACPI item
+  above: the first cpu node, or the boot CPU's.
+- **os-release conformance.** All four are documented limits in
+  `docs/sources.md`. Implement each one or keep the limit, and say which:
+  - backslash escapes (the D-3 tail) are left intact;
+  - with duplicate keys the first wins, where a shell takes the last
+    (audit L-1);
+  - a CRLF bare value keeps its `\r` (L-2);
+  - `/usr/lib/os-release` is not consulted when `/etc/os-release` is
+    absent, although os-release(5) defines that lookup (L-4). This one
+    is a second path, so it needs an ADR.
+- **The AGNOS-native source of truth.** CLAUDE.md says kernel facts come
+  from the boot-info struct at handoff. The shipped AGNOS arms use AGNOS's
+  own `uname` / `sysinfo` syscalls. Decide which is the target and record
+  it in an ADR.
 
-Pure dep-pin bump; no mihi source changed. Picks up upstream fixes
-that the 0.4.0 integration surfaced:
+## 1.x.x — Gated, no release assigned
 
-- ✅ `detect_rocm` now populates `profile_device_name` (prefers
-  `product_name` sysfs file, falls back to synthesized
-  `"AMD Radeon (PCI vendor:device)"`). Closes the "(unnamed)"
-  acceptance gap in M3 above.
-- ✅ Three more upstream detectors gained name population in 2.2.6
-  (TPU, Gaudi, Neuron) — not reachable on archaemenid but the gap is
-  closed for cloud-accelerator consumers.
-- ✅ ai-hwaccel 2.2.6 includes `src/json_out.cyr` in its bundle —
-  resolves the `undefined function 'registry_to_json'` linker
-  warning that 0.4.0 carried.
+- **`BACKEND_AGNOS_GPU` detector.** ai-hwaccel reserves the backend and
+  `ACCEL_AGNOS_GPU` but ships no detector. When one lands, mihi's gpu
+  probes should report accelerators on AGNOS with no mihi-side change;
+  run an AGNOS smoke pass then. *Gate: upstream ai-hwaccel.*
+- **Locking for the gpu singleton** (finding A-6). This is ADR 0002's
+  alternative 3. *Gate: a multi-threaded consumer.*
+- **The read path's last race** (audit U-3). A device node swapped in
+  between `stat` and `open` is still opened. Closing that means an
+  `O_PATH` open plus a re-open through `/proc/self/fd`, which breaks the
+  distro probe where `/proc` is not mounted. *Gate: a consumer that needs
+  it, weighed against chroot / minimal-container support.*
+- **New consumers.** `hapi` (target-box info on link / sync) and
+  `BannerManor` (hostname for banner auto-detect). mihi-side work only
+  if they need a fact mihi lacks. *Gate: their integration.*
 
-### M4 — Pre-consumer hardening (v0.5.0 + v0.6.0)
+## v2.0 — breaking, parked
 
-> **Reordered 2026-05-19**: this milestone was originally "first
-> consumer integration (iam)" with hardening at v0.9.0. The order
-> flipped because `iam` is still scaffold-only — pushing mihi closer
-> to v1.0 shape-stability *before* `iam` integrates avoids consumer-
-> side rework that signature drift would cause.
+Not on the 1.x line. Each one changes a frozen signature.
 
-The P(-1) polish pass from CLAUDE.md — test coverage, benchmark
-baselines, security audit. Spans two cuts (v0.5.0 + v0.6.0).
+- **`mihi_cpu_brand_fill(buf, cap)`** (finding A-7). The public helper
+  stores 48 bytes with no capacity parameter. The comment on it is the
+  contract until then.
+- **A `MihiInfo` envelope / `mihi_collect(info)`**, deferred in ADR 0001.
+  Only if a consumer needs one-call collection.
 
-- ✅ Test coverage ≥ 100 assertions — landed in 0.5.0 (104), grew to
-  108 with the 0.6.0 audit-regression tests.
-- ✅ Doc alignment — `docs/sources.md` Slice E + ADR 0002 (gpu
-  singleton cache) shipped in 0.5.0.
-- ✅ Benchmarks captured — `benches/probe_paths.bcyr` +
-  `benches/parsers.bcyr` + `benches/gpu_paths.bcyr`,
-  `scripts/bench-history.sh` writing `docs/benchmarks/history.csv` +
-  auto-regenerated `docs/benchmarks/results.md` (3-tier). Baseline on
-  archaemenid: probes 2–52 µs, parsers 45–700 ns, gpu cold→warm
-  ratio ~20,000× confirming ADR 0002. (0.5.0)
-- ✅ Security audit (v0.6.0) — `docs/audit/2026-05-19-audit.md`
-  filed. Internal review (3 defensive parser fixes — C-1, M-1, C-2)
-  + external CVE research (2 transitive AMD GPU CVEs documented for
-  consumer awareness: CVE-2025-40289, CVE-2025-40288). No critical
-  findings; probe API unchanged.
+## Out of scope
 
-### M4.5 — distlib hardening (v0.7.0) ✅ shipped 2026-05-19
+Keeps the probe surface from growing by accident. Changing any of these
+needs an ADR.
 
-CI-enforced determinism for the consumer-facing bundle. Mirrors the
-ai-hwaccel + libro + yukti pattern: build the bundle, sha256 it,
-re-build, compare. Any drift fails the build.
-
-- ✅ `cyrius distlib` runs in CI on every push + PR (the existing
-  drift check has been in `.github/workflows/ci.yml` since v0.2.0;
-  the 0.7.0 cut adds the determinism gate next to it).
-- ✅ **Determinism rebuild gate** — second `cyrius distlib`
-  invocation in the same CI step must produce a byte-identical
-  bundle (SHA-256 compare).
-- ✅ **Drift gate** — if a contributor forgets to regenerate
-  `dist/` after touching `src/`, `diff -q` against the checked-in
-  bundle fails the build.
-- ✅ **Bench file build gate** — every `benches/*.bcyr` is compiled
-  to catch a helper removal that breaks bench compilation. Doesn't
-  run the benches.
-- ✅ **Required-files list expanded** — ADR 0002, audit doc,
-  benchmark infrastructure all now enforced by the docs job.
-- **Acceptance ✅**: CI workflow has `distlib drift check` +
-  `distlib determinism check` + `Bench files build` steps sitting
-  between `Test` and `DCE parity check`.
-
-### M4.6 — Transitive consumer fixes (v0.8.x, reserved) ✅ closed empty 2026-05-19
-
-Patch slots reserved for fixes that would surface when `iam` (M5) or
-`chakshu` (M6) integrated against mihi. **Closed empty at v0.8.0** —
-iam's integration against mihi 0.7.0 surfaced zero transitive fixes,
-so no patch content was needed. The v0.8.0 cut repurposed the slot as
-the M5-acknowledgment release instead. If chakshu's eventual M6
-integration surfaces transitive fixes, they land in a v0.9.x slot
-before v1.0 freezes the API.
-
-### M5 — First consumer integration (v0.8.0) ✅ shipped 2026-05-19
-
-> **Sequencing note**: roadmap originally planned this at v0.9.0;
-> reality shipped it at v0.8.0. iam integrated against the existing
-> mihi 0.7.0 `dist/mihi.cyr` bundle rather than waiting for a
-> renamed cut, so the M5 acknowledgment landed in the slot
-> originally reserved as M4.6.
-
-> **Earlier reorder (2026-05-19)**: M5 was reordered from v0.5.0 to
-> sit behind M4 (hardening) + M4.5 (distlib) so mihi's surface was
-> benchmarked, audited, and bundle-deterministic before `iam`
-> pinned it.
-
-`iam` consumes mihi end-to-end. The library was shape-stable post-M4
-audit (no findings required signature changes); breaking changes from
-this point onward warrant an ADR. iam's mihi integration drives the
-v1.0 "first consumer green" checkbox.
-
-- ✅ `iam` repo's `[deps.mihi]` block pinned at
-  `tag = "0.7.0"` (`iam/cyrius.cyml`). iam-side intent is to repin
-  to `tag = "1.0.0"` in lockstep when mihi cuts v1.0.
-- ✅ Both repos build green in CI.
-- ✅ `iam` produces a real output line for every mihi probe
-  (kernel, release, arch, host, model, cpus, mem total/free,
-  uptime, distro, plus the gpu slice).
-- ✅ iam-0.9.0 RC released 2026-05-19, F-001 (TTY-escape
-  sanitization at the renderer boundary) closed iam-side per
-  the *mihi returns raw bytes, consumers handle formatting* rule.
-- **Acceptance ✅**: `iam` on archaemenid prints a complete
-  system-info report sourced entirely from mihi.
-
-### M6 — Second consumer (chakshu) green (v1.0.0) ✅ shipped 2026-05-20
-
-When `chakshu` consumes mihi cleanly for its base monitor-readout
-substrate, the API has crossed the "more than one consumer" gate
-that locks API freeze. Cut v1.0.0.
-
-- ✅ `chakshu` (a.k.a. `shu`) consumes mihi via `[deps.mihi] tag =
-  "0.8.0"` as of chakshu-0.6.0 (2026-05-20). chakshu's Cyrius pin
-  also moved to 6.0.1, unblocking the integration the original
-  M6 entry called out as the gate.
-- ✅ Both consumers (iam + chakshu) now in `state.md`'s consumer
-  list as integrated, not planned.
-- ✅ Layered architecture established by the chakshu integration:
-  mihi owns identity / static-fact probes; chakshu owns per-frame
-  deltas (CPU%, disk rate, network rate, per-pid stats). Future
-  identity additions accrete on the mihi side rather than
-  re-introducing hand-rolled `/proc` reads in consumers.
-- ✅ API freeze announced in CHANGELOG `### Breaking` section as a
-  no-op — signatures already stable since 0.4.0; the "breaking"
-  is the contract change.
-- ✅ v1.0.0 cut.
-
-## Out of scope (for v1.0)
-
-Keeps future contributors from adding to v1.0 by accident.
-
-- **Windows / macOS probes** — Linux + AGNOS-native only for v1.0.
-  Windows / macOS may land in v1.1+ if there's demand.
-- **GPU temperature, fan speed, power draw** — monitoring concerns;
-  live in `chakshu`, not in a static probe library.
-- **Network info** (interface list, IP, MAC) — separate concern; a
-  future `mihi-net` sibling lib if needed.
-- **Process info** (uptime per process, top consumers) — `chakshu` /
-  `ps`-equivalents own this.
-- **Configurable output format** — mihi returns raw values; all
-  formatting lives in consumers (`iam`, `chakshu`).
-- **Caching layer** — every probe is a fresh read.
+- **Windows / macOS probes** — Linux and AGNOS only.
+- **GPU temperature, fan speed, power draw** — monitoring concerns that
+  belong to `chakshu`, not a static probe library.
+- **Network info** (interfaces, IPs, MACs) — a future `mihi-net` sibling
+  if needed.
+- **Process info** (per-process uptime, top consumers) — `chakshu` and
+  `ps`-equivalents own it.
+- **Configurable output format** — mihi returns raw values; formatting
+  lives in consumers.
+- **Caching layer** — every probe is a fresh read; the gpu singleton is
+  the one documented exception ([ADR 0002](../adr/0002-gpu-singleton-cache.md)).
 - **Daemon mode** — mihi is a library, not a service.
-
-## Pending upstream
-
-- [x] **Re-source `uname` off agnosys-core.** ✅ closed at **v1.1.3** (2026-06-22).
-  mihi used `agnosys_uname` + the `UTS_*` offsets (kernel release / hostname /
-  machine), which lived in agnosys's `syscall.cyr`; the agnosys → agnodrm
-  decomposition (2026-06-19) removed that syscall layer, leaving mihi resolving the
-  symbol through a GitHub redirect on the pinned `1.4.0` tag. The unblocker landed
-  as filed: cyrius carved the uname/sysinfo plumbing into the stdlib `sys` module
-  (6.1.28) with per-target `UTS_*` / `SI_*` offsets for Linux **and** AGNOS, and
-  retired the stale bundled agnosys snapshot at 6.2.37. mihi rewired to
-  `sys_uname` / `sys_sysinfo` and dropped `[deps.agnosys]` entirely; `mihi_uname`
-  wraps the raw `0/-errno` return as a `Result`, so `is_err_result` consumers were
-  unaffected. iam's matching drop unblocked at the same cut.
-- [x] **arm64 CPU-brand source.** ✅ closed at **v1.2.4** (2026-08-23).
-  `mihi_cpu_model` read `/proc/cpuinfo`'s `model name`, which arm64 Linux
-  does not emit — `c_show()` in `arch/arm64/kernel/cpuinfo.c` prints
-  `CPU implementer` / `CPU part` / `CPU revision` and no brand line — so
-  the probe returned null on every aarch64 Linux box since 0.2.0, with a
-  source citation asserting otherwise (finding D-1,
-  [2026-08-23 audit](../audit/2026-08-23-audit.md)). 1.2.3 corrected the
-  citation; 1.2.4 closes the gap with a third arm reading
-  `/sys/firmware/devicetree/base/cpus/cpu@0/compatible` — a separate
-  arch-native source, not a fallback chain, anchored at `cpu@0` for the
-  same big.LITTLE reason the x86 path anchors at the first block.
-  **Verified on iron** (agnosarm, Raspberry Pi 4 Model B, kernel
-  6.8.0-1053-raspi): `model: arm,cortex-a72`, suite 144/144.
-  ⚠ Residual: ACPI-booted arm64 (most server hardware) has no device
-  tree, so the probe still returns null there — narrowed from "all of
-  aarch64", not eliminated. Consumers must still render null as
-  "unknown"; `iam` and `chakshu` already do.
-- [ ] **`BACKEND_AGNOS_GPU` detector.** ai-hwaccel 2.3.x reserves the backend id and
-  an `ACCEL_AGNOS_GPU` accelerator type, and `builder_no_exec()` already sets its
-  bit — but upstream ships no detector dispatch for it, so it is inert. When one
-  lands, mihi's gpu probes should report accelerators on the sovereign target with
-  no mihi-side change; worth an agnos smoke pass at that point. **Unblocker:**
-  upstream ai-hwaccel.
 
 ## Cross-references
 
-- [`state.md`](state.md) — live status (current version, sizes,
-  consumer integrations)
+- [`state.md`](state.md) — live status: version, pins, sizes, consumers
 - [`../sources.md`](../sources.md) — per-probe citation index
+- [`../audit/`](../audit/) — audit reports
 - [`../../CHANGELOG.md`](../../CHANGELOG.md) — release history
