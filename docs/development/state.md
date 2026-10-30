@@ -60,13 +60,16 @@ unchanged; 143/143.
 
 The published sidecar `dist/mihi.deps` is now **`sys syscalls`**, down from
 the 20-leaf copy of `[deps] stdlib` that 6.5.x wrote. Since cyrius 6.6.18 the
-sidecar is derived by `distlib`'s compile-verify, and 6.6.20's version of it
-mis-credits two leaves to mihi: `sigil` (for `UTS_MACHINE`, the first
-declarer in directory order) and the `bayan` monolith (for ai-hwaccel's
-unreachable `bayan_json_v_*` names). An explicit `include "lib/sys.cyr"` in the
-four sys-using modules and the optional bayan-json dep stop both. Measured on a
-minimal consumer, the unaided sidecar would have taken it from 404,832 B to
-1,804,072 B. The why is in [architecture 001](../architecture/001-bundle-and-dependency-shape.md).
+sidecar is derived by `distlib`'s compile-verify, which gives every undefined
+name an owner. Two declarations keep it at two leaves:
+- an explicit `include "lib/sys.cyr"` in the four sys-using modules makes
+  `sys` the owner of `UTS_*`;
+- the optional dep on bayan's thin JSON module owns ai-hwaccel's unreachable
+  `bayan_json_v_*` names, so the full bayan monolith never enters.
+
+Measured on a minimal consumer, a sidecar naming `sigil` and `bayan` would
+have taken it from 404,832 B to 1,804,072 B. The details are in
+[architecture 001](../architecture/001-bundle-and-dependency-shape.md).
 
 `[deps] stdlib` went from 20 leaves to 10, the ones mihi's own sources call.
 Behaviour change: ai-hwaccel 2.3.29's no-exec Vulkan sysfs scan means the GPU
@@ -464,8 +467,8 @@ Expected output that is not mihi's to fix:
   `x86_64-windows`. mihi does not target Windows.
 - In a *consumer* that does not supply bayan: ten `undefined function
   'bayan_json_v_*'` from `lib/ai-hwaccel.cyr` (seven before ai-hwaccel
-  2.5.5), unreachable and removed by DCE. mihi's own builds no longer print them, because the optional
-  bayan-json dep defines them in-tree.
+  2.5.5), unreachable and removed by DCE. mihi's own builds do not print them: the
+  thin bayan-json module defines them.
 
 The aarch64 `lib/io.cyr:442: raw syscall 32 is x86_64 dup` warning that
 1.2.2–1.2.7 carried is gone, as is the `benches/probe_paths.bcyr` "large
@@ -478,7 +481,7 @@ Direct (declared in `cyrius.cyml`):
 - **stdlib** — the 10 leaves mihi's own sources call: `syscalls`, `string`, `alloc`, `io`, `result` (`mihi_uname`'s return), `vec` and `sakshi` (`gpu.cyr`), `sys`, plus `assert` for the tests and `bench` for the benches. Consumers do not inherit the list: their copy of mihi's needs is `dist/mihi.deps`, derived by `distlib`. `bayan` left at 1.2.5 and must never come back as a stdlib leaf; see [architecture 001](../architecture/001-bundle-and-dependency-shape.md).
 - **`sys` (stdlib)** — the `uname(2)` / `sysinfo(2)` plumbing, with per-target `UTS_*` / `SI_*` offsets for Linux **and** AGNOS. mihi's four identity probes (kernel name / kernel version / cpu arch / hostname) share one `sys_uname` call. This replaced the `[deps.agnosys]` git dep at 1.1.3, when cyrius retired the stale stdlib agnosys snapshot at 6.2.37. See [ADR 0001](../adr/0001-shared-uts-buffer.md).
 - **ai-hwaccel 2.4.2** (git dep) — accelerator detection. 2.2.5 was the first release with the no-exec contract (`registry_detect_no_exec()` masks off the subprocess-shelling backends); without it mihi couldn't honor the "probes are pure reads" rule. At 2.4.2 `backend_uses_exec` (`src/types.cyr`) returns 1 for **six of 18** backends: CUDA, Gaudi, Neuron, Intel oneAPI, Cerebras, Graphcore. Windows (2.3.25), Apple (2.3.27) and Vulkan (2.3.29) became native. Vulkan's no-exec path is a `/sys/class/drm` scan that reports NVIDIA and Intel cards and leaves `amdgpu` to ROCm, so it adds no duplicate on AMD hosts. `BACKEND_AGNOS_GPU` is reserved with **no detector dispatch wired yet**, so it is inert for mihi. Of the 2.3.x symbol de-collisions only `hw_registry_new` reaches mihi, in the test suite's synthetic registries. 2.4.2's bundle opens with its own compile-verified `# Requires` block (12 leaves). **Known wrong value:** its `detect_tpu` types every `/sys/class/accel/accelN` node but amdxdna's as a "Google TPU v4", driver unchecked, so an Intel NPU (`intel_vpu`), Gaudi or Cloud AI 100 node shows up as a phantom TPU. Fixed in 2.5.5, which needs cyrius ≥ 6.7.16. Pin history: 2.2.5 (0.4.0) → 2.2.6 (0.4.1) → 2.3.18 (1.2.2) → 2.3.19 (1.2.5, forced: it moves the bundle onto canonical `bayan_json_v_*` names) → 2.3.22 (1.2.6) → 2.4.2 (1.2.8, the release that pins cyrius 6.6.20; kept at 1.3.0, since no release pins 6.7.9 and 2.5.5 needs ≥ 6.7.16).
-- **bayan 1.11.1** (git dep, `optional = true`, `[features] default = ["bayan"]`) — the thin `dist/bayan-json.cyr` module only, at the latest tag: the commit ai-hwaccel 2.5.5 pins and cyrius 6.7.18 folds (it pins 6.7.16 itself). It requires `math`, `slice` and `hashseed`, all in the vendored snapshot. mihi calls nothing in it. It defines the unreachable `bayan_json_v_*` names `dist/ai-hwaccel.cyr` references, so `distlib` (measured on 6.6.20, 6.7.9 and 6.7.18) does not credit them to the stdlib bayan monolith and publish `bayan` in mihi's sidecar. Optional, so consumers never resolve it (verified: no bayan pin or file in a consumer). Added at 1.2.8 (1.5.12), 1.5.14 at 1.3.0, 1.11.1 at 1.3.1; the full reasoning is in [architecture 001](../architecture/001-bundle-and-dependency-shape.md).
+- **bayan 1.11.1** (git dep, `optional = true`, `[features] default = ["bayan"]`) — the thin `dist/bayan-json.cyr` module only, at the latest tag: the commit ai-hwaccel 2.5.5 pins and cyrius 6.7.18 folds (it pins 6.7.16 itself). It requires `math`, `slice` and `hashseed`, all in the vendored snapshot. mihi calls nothing in it. bayan ships its JSON code as its own module so a consumer can take only that. mihi takes it for the unreachable `bayan_json_v_*` names `dist/ai-hwaccel.cyr` references, and distlib's compile-verify resolves them to it, so mihi's sidecar never names the full bayan (measured on 6.6.20, 6.7.9 and 6.7.18). Optional, so consumers never resolve it (verified: no bayan pin or file in a consumer). Added at 1.2.8 (1.5.12), 1.5.14 at 1.3.0, 1.11.1 at 1.3.1; the full reasoning is in [architecture 001](../architecture/001-bundle-and-dependency-shape.md).
 
 ## Consumers
 

@@ -33,32 +33,33 @@ The verify seeds the sidecar with the `include "lib/<leaf>.cyr"` lines the
 bundled modules carry, then compiles and adds owners for whatever is still
 undefined. That is why `cpu.cyr`, `mem.cyr`, `kernel.cyr` and `host.cyr` each
 include `lib/sys.cyr` even though mihi's own build prepends it. The include
-states a real dependency, and it keeps the sidecar from resting on the verify's
-owner rule. That rule went wrong on cyrius 6.6.20: without the seed, 6.6.20
-credits `UTS_MACHINE` to the first snapshot file that declares it, which is the
-sigil fold's private copy of the `UTS_*` enum, in the publishing host's
-directory order. The sidecar then names `sigil` and every consumer vendors and
-links it. cyrius 6.7.7 fixed the owner rule; measured on 6.7.9, the unseeded
-verify records `sys` for `UTS_MACHINE`. The seed stays.
+states mihi's real dependency, and it makes `sys` the owner of `UTS_*` in the
+verify. Without it, cyrius 6.6.20's verify took the first snapshot file
+declaring `UTS_MACHINE`, in the publishing host's directory order, and that was
+the sigil fold's copy of the enum. Since 6.7.7 the owner rule picks `sys`
+either way (measured on 6.7.9). The include stays.
 
 ## bayan: the thin module, optional, never the monolith
 
+bayan ships thin modules so a consumer can take only the part it uses. The
+full `lib/bayan.cyr` (json, toml, cyml, csv, base64, bigint, u128, yaml, pdf)
+is 641 KB; `dist/bayan-json.cyr` is the JSON part alone.
+
 `dist/ai-hwaccel.cyr` references ten `bayan_json_v_*` functions (seven before
-ai-hwaccel 2.5.5) and defines none. They sit in its `profile_from_json` deserialize path, which nothing in
-ai-hwaccel calls, so they are unreachable. ai-hwaccel declares bayan optional
-and leaves the names to a consumer that wants that path. mihi never calls it.
+ai-hwaccel 2.5.5) and defines none. They sit in its `profile_from_json`
+deserialize path, which nothing in ai-hwaccel calls, so they are unreachable.
+ai-hwaccel declares bayan optional and leaves the names to a consumer that
+wants that path. mihi never calls it.
 
-If nothing in the verify unit defines them, `distlib` (measured on 6.6.20,
-6.7.9 and 6.7.18) looks the names up in the stdlib snapshot, finds the bayan monolith (`lib/bayan.cyr`:
-json, toml, cyml, csv, base64, bigint, u128, yaml, pdf) and records `bayan` as
-a requirement of mihi's bundle. mihi's bundle never references those names.
-On 6.7.9 and 6.7.18 that sidecar is `sys bayan syscalls`. Measured on a minimal consumer
-at 6.6.20, the sidecar 6.6.20 derived unaided (`sigil bayan sys syscalls`) took
-the binary from 404,832 B to 1,804,072 B (689,960 B with DCE).
+So mihi declares `[deps.bayan]` on the thin JSON module, `optional = true`
+with `[features] default = ["bayan"]`. distlib's compile-verify then resolves
+the `bayan_json_v_*` names to that module, and mihi's sidecar stays `sys
+syscalls`. With no bayan dep, the same names would resolve to the full
+`lib/bayan.cyr` in the stdlib snapshot, and the sidecar would name `bayan`.
+Measured on a minimal consumer at 6.6.20: 404,832 B as shipped, against
+1,804,072 B (689,960 B with DCE) with `sigil` and `bayan` in the sidecar.
 
-So mihi declares `[deps.bayan]` on bayan's **thin** JSON module
-(`dist/bayan-json.cyr`) as `optional = true` with
-`[features] default = ["bayan"]`. The rules that follow:
+The rules that follow:
 
 - **Never put `bayan` in `[deps] stdlib`.** That is the monolith, and through
   1.2.4 the sidecar copied `[deps] stdlib`, so every consumer linked 641 KB of

@@ -177,9 +177,9 @@ changed. The GPU probes find more, and stop reporting a TPU that is not there
   also names `math`, `slice` and `hashseed`; all three are in the vendored
   snapshot. The 1.3.0 note that ai-hwaccel wanted a different bayan is gone,
   because both now pin 1.11.1.
-- **The bayan-json dep is still needed.** Re-measured on 6.7.18 without it:
-  the verify records the bayan monolith and the sidecar becomes `sys bayan
-  syscalls`.
+- **The sidecar stays `sys syscalls`.** The `bayan_json_v_*` names ai-hwaccel's
+  bundle references resolve to the thin bayan-json module in distlib's
+  compile-verify, so no bayan leaf is published. Re-measured on 6.7.18.
 
 ### Changed — the no-exec contract, re-measured
 
@@ -301,13 +301,13 @@ version stamp and one corrected comment.
   `note: bayan 1.5.12 (wanted by ai-hwaccel) not used; 1.5.14 (the root) resolved
   first`. ai-hwaccel's own bayan dep is optional and its JSON path unreachable,
   so the note is informational.
-- **Both 1.2.8 sidecar guards re-measured on 6.7.9.** Without the bayan-json dep
-  the verify still records the bayan monolith (sidecar `sys bayan syscalls`), so
-  the dep stays. Without the `include "lib/sys.cyr"` seed, 6.7.9 now records
-  `sys` for `UTS_MACHINE` (cyrius fixed the first-declarer owner rule at 6.7.7),
-  so the seed is no longer load-bearing. It stays because it states a real
-  dependency. [Architecture 001](docs/architecture/001-bundle-and-dependency-shape.md)
-  is updated to match.
+- **The sidecar re-measured on 6.7.9: still `sys syscalls`.** The
+  `bayan_json_v_*` names resolve to the thin bayan-json module. `UTS_MACHINE`
+  resolves to `sys` with or without the `include "lib/sys.cyr"` lines, since
+  cyrius 6.7.7's owner rule. The include stays because it states mihi's real
+  dependency.
+  [Architecture 001](docs/architecture/001-bundle-and-dependency-shape.md) is
+  updated to match.
 - **ai-hwaccel stays at `2.4.2`.** No ai-hwaccel release pins 6.7.9: 2.4.2 pins
   6.6.20 and every 2.5.x pins 6.7.18. Each 2.5.x tag was built against mihi on
   6.7.9:
@@ -410,8 +410,11 @@ probe behaviour*). The published sidecar shrinks from 20 stdlib leaves to 2.
 - **New optional dep: bayan `1.5.12`, thin module `dist/bayan-json.cyr` only**
   (`optional = true`, `[features] default = ["bayan"]`). This is the commit
   cyrius 6.6.20 folds and ai-hwaccel 2.4.2 pins. Consumers never resolve it,
-  because features are read from the root manifest only. It exists because of
-  how 6.6.20's `distlib` derives the sidecar (*Changed — published artifacts*).
+  because features are read from the root manifest only. bayan ships its JSON
+  code as its own module so a consumer can take that and nothing else. mihi
+  takes it for the `bayan_json_v_*` names ai-hwaccel's bundle references, so
+  they resolve to that module rather than to the full bayan (*Changed —
+  published artifacts*).
 - **`[deps] stdlib` 20 → 10 leaves**: `syscalls string alloc io result vec sys
   sakshi assert bench`. Since 6.6.18 the list feeds mihi's own builds only and
   never the published sidecar, so it is now what mihi's own sources call. Gone:
@@ -433,26 +436,24 @@ probe behaviour*). The published sidecar shrinks from 20 stdlib leaves to 2.
   `[deps] stdlib`. `dist/mihi.cyr` opens with the matching `# Requires` block,
   and four modules (`cpu`, `mem`, `kernel`, `host`) now carry
   `include "lib/sys.cyr"`.
-- **Why the include and the bayan dep exist.** 6.6.20's compile-verify writes
-  `sigil bayan sys syscalls` without them:
-  - `sigil` because it credits `UTS_MACHINE` to the first snapshot file that
-    declares it, which is the sigil fold's private copy of the `UTS_*` enum. The
-    answer depends on the host's directory order; cyrius fixed that at 6.7.7.
-    The explicit `sys` include seeds the sidecar, so the name is never
-    undefined.
-  - `bayan` (the monolith) because `dist/ai-hwaccel.cyr` references seven
-    unreachable `bayan_json_v_*` functions. With no named dep defining them, the
-    verify finds them in `lib/bayan.cyr` and records the leaf as mihi's, though
-    mihi's bundle never references them. The thin bayan-json dep defines them in
-    the verify unit.
+- **How the sidecar comes out at two leaves.** distlib's compile-verify gives
+  every name the bundle and its named deps leave undefined an owner. Two
+  declarations decide which:
+  - `include "lib/sys.cyr"` in the four modules that use `sys` makes `sys` the
+    owner of `UTS_*`. Without it, 6.6.20 took the first snapshot file that
+    declares `UTS_MACHINE`, in directory order, and that was the sigil fold's
+    copy of the enum.
+  - The thin bayan-json module owns the seven unreachable `bayan_json_v_*`
+    functions `dist/ai-hwaccel.cyr` references. Without a bayan dep, the
+    owner would be the stdlib's full `lib/bayan.cyr`.
 
   Measured on a minimal consumer (cyrius 6.6.20, ai-hwaccel 2.4.2, calling
   `mihi_uname` and `mihi_gpu_count`):
 
   | mihi sidecar | consumer | `CYRIUS_DCE=1` |
   |---|---:|---:|
-  | as 6.6.20 derives it unaided: `sigil bayan sys syscalls` | 1,804,072 B | 689,960 B |
-  | `sys` seeded only: `sys bayan syscalls` | 795,408 B | 226,064 B |
+  | neither declaration: `sigil bayan sys syscalls` | 1,804,072 B | 689,960 B |
+  | the `sys` include only: `sys bayan syscalls` | 795,408 B | 226,064 B |
   | **shipped: `sys syscalls`** | **404,832 B** | **200,032 B** |
 
   The shipped consumer's lock carries no bayan pin and its `lib/` no bayan or

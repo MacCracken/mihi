@@ -28,9 +28,9 @@ git = "https://github.com/MacCracken/ai-hwaccel.git"
 tag = "2.5.5"
 modules = ["dist/ai-hwaccel.cyr"]
 
-# Optional, so consumers never resolve it (features are read from the root
-# manifest only). It defines the unreachable bayan_json_v_* names that
-# dist/ai-hwaccel.cyr leaves to its consumer. Never the stdlib bayan monolith:
+# bayan's thin JSON module: the bayan_json_v_* names dist/ai-hwaccel.cyr
+# leaves to its consumer, without the rest of bayan. Optional, so consumers
+# never resolve it (features are read from the root manifest only).
 # docs/architecture/001-bundle-and-dependency-shape.md.
 [deps.bayan]
 optional = true
